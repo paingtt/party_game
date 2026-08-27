@@ -157,8 +157,13 @@ function view(room, pid) {
   }
   return {
     mode: room.mode,
-    code: room.code, phase: room.phase, day: room.day, hostId: room.hostId,
+    code: room.code, phase: room.phase, day: room.day, hostId: room.hostId, noJudge: !!room.noJudge,
     you: { id: me.id, name: me.name, role: me.role, team: me.team, alive: me.alive, isWolf: me.isWolf },
+    readyCount: room.ready ? room.ready.size : 0,
+    readyTotal: room.players.length,
+    youReady: !!(room.ready && room.ready.has(pid)),
+    proceedCount: room.proceed ? [...room.proceed].filter(id => { const p = room.players.find(x => x.id === id); return p && p.alive; }).length : 0,
+    proceedNeed: (() => { const n = alivePlayers(room).length; return n > 0 ? Math.floor(n / 2) + 1 : 0; })(),
     players, myAction,
     night: (room.phase === 'night') ? { steps: room.night.steps, step: room.night.step, stepName: (STEP_NAME[room.mode][room.night.steps[room.night.step]] || ''), total: room.night.steps.length } : null,
     hunt: hunter,
@@ -244,6 +249,15 @@ function startGame(room) {
   return true;
 }
 
+// 无法官模式：所有玩家都准备且人数符合配置时自动开局
+function maybeAutoStart(room) {
+  if (room.phase !== 'lobby' || !room.noJudge) return false;
+  const list = expandRoles(room.roleConfig, MODES[room.mode].roleOrder);
+  if (room.players.length !== list.length) return false;
+  if (!room.players.every(p => room.ready.has(p.id))) return false;
+  return startGame(room);
+}
+
 function resetNight(room) {
   const a = { steps: buildNightSteps(room), step: 0 };
   if (room.mode === 'werewolf') {
@@ -259,9 +273,11 @@ function resetNight(room) {
 
 function startNight(room, first) {
   room.phase = 'night';
+  room.proceed = new Set();
   room.lastDeaths = [];
   room.silenced = null;
   resetNight(room);
+  room.night.stepAt = Date.now();
   log(room, `第 ${room.day} 夜降临。`);
   skipUnrunnable(room);
   broadcast(room);
@@ -270,9 +286,28 @@ function startNight(room, first) {
 function advanceNight(room) {
   const a = room.night;
   a.step++;
+  room.proceed = new Set();
   if (a.step >= a.steps.length) { resolveNight(room); return; }
   skipUnrunnable(room);
+  a.stepAt = Date.now();
   broadcast(room);
+}
+
+// 无法官模式：夜晚某步的在线角色长时间不操作，超时自动跳过该步，避免全场卡死
+const NIGHT_STEP_TIMEOUT = 45000;
+function checkNightTimeouts() {
+  const now = Date.now();
+  rooms.forEach(room => {
+    if (room.phase === 'night' && room.night && room.night.stepAt && now - room.night.stepAt > NIGHT_STEP_TIMEOUT) {
+      if (stepActorConnected(room)) {
+        log(room, `步骤超时（${STEP_NAME[room.mode][room.night.steps[room.night.step]] || '当前步骤'}），自动跳过。`);
+        advanceNight(room);
+      } else {
+        skipUnrunnable(room);
+        if (room.phase === 'night') broadcast(room);
+      }
+    }
+  });
 }
 
 // 当前夜晚步骤是否有「在线且存活」的角色可以操作
@@ -333,6 +368,7 @@ function resolveNightWerewolf(room) {
   deaths.forEach(d => kill(room, d.id, d.cause));
   room.guardLast = a.guardTarget;
   room.phase = 'day';
+  room.proceed = new Set();
   log(room, '天亮了。');
   if (room.hunter && room.hunter.pending) { room.phase = 'hunter'; broadcast(room); return; }
   const w = checkWin(room);
@@ -374,6 +410,7 @@ function resolveNightKillgame(room) {
   room.lastDeaths = Array.from(deaths.keys()).map(id => ({ name: nameOf(room, id), role: RD[room.players.find(p => p.id === id).role].name }));
   deaths.forEach((cause, id) => kill(room, id, cause));
   room.phase = 'day';
+  room.proceed = new Set();
   log(room, '天亮了。');
   const w = checkWin(room);
   if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '杀手阵营胜利！'); }
@@ -383,6 +420,7 @@ function resolveNightKillgame(room) {
 function startVote(room) {
   if (room.phase !== 'day') return;
   room.phase = 'vote';
+  room.proceed = new Set();
   room.votes = {};
   log(room, '进入投票环节。');
   broadcast(room);
@@ -480,7 +518,8 @@ function handleApi(url, data) {
       const hostId = uid();
       const room = {
         code, mode, hostId, day: 0, phase: 'lobby',
-        players: [{ id: hostId, name: (data.name || '法官').slice(0, 12), role: null, team: null, isWolf: false, alive: true, connected: true }],
+        noJudge: !!data.noJudge, ready: new Set(), proceed: new Set(),
+        players: [{ id: hostId, name: (data.name || (data.noJudge ? '玩家' : '法官')).slice(0, 12), role: null, team: null, isWolf: false, alive: true, connected: true }],
         roleConfig: cfg, night: null, votes: {}, chat: [], log: [], result: null, lastDeaths: [], clients: new Map(),
         emptyNeedles: {}, terroristBombUsed: false, silenced: null,
       };
@@ -495,7 +534,8 @@ function handleApi(url, data) {
       if (room.phase !== 'lobby') return { ok: false, error: '游戏已开始，无法加入' };
       const id = uid();
       room.players.push({ id, name: (data.name || '玩家').slice(0, 12), role: null, team: null, isWolf: false, alive: true, connected: true });
-      return { ok: true, code: room.code, playerId: id, isHost: false };
+      const started = room.noJudge ? maybeAutoStart(room) : false;
+      return { ok: true, code: room.code, playerId: id, isHost: false, _broadcast: started, _room: room };
     }
     case '/api/start': {
       const room = rooms.get(data.code);
@@ -515,6 +555,8 @@ function handleApi(url, data) {
       }
       const me = room.players.find(p => p.id === pid);
       if (me) me.connected = false;
+      if (room.ready) room.ready.delete(pid);
+      if (room.proceed) room.proceed.delete(pid);
       return { ok: true };
     }
     case '/api/action': {
@@ -527,6 +569,38 @@ function handleApi(url, data) {
       if (type === 'chat') {
         const text = (data.text || '').toString().slice(0, 200);
         if (text) { room.chat.push({ name: me.name, text, ts: Date.now() }); if (room.chat.length > 100) room.chat.shift(); }
+        return { ok: true, _broadcast: true, _room: room };
+      }
+      if (type === 'ready') {
+        if (room.phase !== 'lobby') return { ok: false, error: '游戏已开始' };
+        if (!room.noJudge) return { ok: false, error: '该房间为法官模式' };
+        if (room.ready.has(pid)) return { ok: true };
+        room.ready.add(pid);
+        const started = maybeAutoStart(room);
+        if (!started) {
+          const list = expandRoles(room.roleConfig, MODES[room.mode].roleOrder);
+          if (room.players.length !== list.length)
+            log(room, `需恰好 ${list.length} 人才能开始（当前 ${room.players.length} 人，且需全员准备）`);
+        }
+        return { ok: true, _broadcast: true, _room: room };
+      }
+      if (type === 'proceed') {
+        if (!room.noJudge) return { ok: false, error: '该房间为法官模式' };
+        if (!me.alive) return { ok: false, error: '出局玩家无法推进' };
+        if (room.phase !== 'day' && room.phase !== 'vote' && room.phase !== 'night') return { ok: false, error: '当前阶段无需确认' };
+        room.proceed.add(pid);
+        const alive = alivePlayers(room);
+        const need = Math.floor(alive.length / 2) + 1; // 超过一半
+        const got = [...room.proceed].filter(id => { const p = room.players.find(x => x.id === id); return p && p.alive; }).length;
+        if (got >= need) {
+          room.proceed = new Set();
+          if (room.phase === 'day') { startVote(room); return { ok: true, _broadcast: true, _room: room }; }
+          if (room.phase === 'vote') { log(room, `多数玩家确认，提前结算投票。`); finishVote(room); return { ok: true, _broadcast: true, _room: room }; }
+          if (room.phase === 'night') {
+            if (stepActorConnected(room)) { log(room, `多数玩家确认，跳过 ${STEP_NAME[room.mode][room.night.steps[room.night.step]] || '当前步骤'}。`); advanceNight(room); return { ok: true, _broadcast: true, _room: room }; }
+            broadcast(room); return { ok: true, _broadcast: true, _room: room };
+          }
+        }
         return { ok: true, _broadcast: true, _room: room };
       }
       if (type === 'start_vote') {
@@ -671,7 +745,7 @@ function handleApi(url, data) {
         room.hunter = null;
         const w = checkWin(room);
         if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '狼人阵营胜利！'); }
-        else { room.phase = 'day'; }
+        else { room.phase = 'day'; room.proceed = new Set(); }
         return { ok: true, _broadcast: true, _room: room };
       }
       return { ok: false, error: '无效操作' };
@@ -683,3 +757,5 @@ function handleApi(url, data) {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`聚会桌游(联网版) 已启动: http://localhost:${PORT}  (bind 0.0.0.0, PORT=${PORT})`);
 });
+
+setInterval(checkNightTimeouts, 5000);

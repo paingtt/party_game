@@ -123,6 +123,9 @@
         <div id="steppers"></div>
       </div>
       <div class="total"><span>总人数</span><b id="totalCount">6</b></div>
+      <label class="field" style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--sub);cursor:pointer">
+        <input type="checkbox" id="noJudge" style="width:auto"> 无需法官（全员准备后自动开局，过半玩家确认即推进）
+      </label>
       <button class="btn" onclick="createRoom()">创建房间 →</button>
     </div>
     <div class="card" style="margin-top:12px;">
@@ -247,10 +250,11 @@ async function createRoom(){
   if(total<MODES[currentMode].minPlayers){toast('至少需要 '+MODES[currentMode].minPlayers+' 人');return;}
   const wolves=MODES[currentMode].roleOrder.filter(r=>MODES[currentMode].roles[r].team==='wolf').reduce((s,r)=>s+roles[r],0);
   if(wolves<1){toast('至少 1 名杀手/狼人');return;}
-  const r=await post('/api/create',{name,roles,mode:currentMode});
+  const noJudge=document.getElementById('noJudge').checked;
+  const r=await post('/api/create',{name,roles,mode:currentMode,noJudge});
   if(!r.ok){toast(r.error||'创建失败');return;}
   me={code:r.code,playerId:r.playerId,isHost:true,name};
-  seedView(name,r.code,r.playerId); // 立即渲染房间号，不等 SSE
+  seedView(name,r.code,r.playerId,noJudge); // 立即渲染房间号，不等 SSE
   enterGame();
 }
 async function joinRoom(){
@@ -264,8 +268,8 @@ async function joinRoom(){
   enterGame();
 }
 // 创建/加入成功后立即构造一份最小视图，先渲染出房间号，SSE 到达后再被完整覆盖
-function seedView(name,code,pid){
-  S={mode:currentMode,code,phase:'lobby',day:0,hostId:pid,
+function seedView(name,code,pid,noJudge){
+  S={mode:currentMode,code,phase:'lobby',day:0,hostId:pid,noJudge:!!noJudge,
      you:{id:pid,name,role:null,team:null,alive:true,isWolf:false},
      players:[{id:pid,name,alive:true,role:null,isWolf:false}],
      myAction:null,night:null,lastDeaths:[],votesCount:0,aliveCount:1,
@@ -332,16 +336,24 @@ function escapeHtml(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&l
 function renderLobby(){
   const ps=S.players.map(p=>`<span class="pc">${escapeHtml(p.name)}</span>`).join('');
   const isHost=S.you.id===S.hostId;
+  let bottom;
+  if(S.noJudge){
+    bottom=`<button class="btn ${S.youReady?'ghost':''}" onclick="act('ready')">${S.youReady?'已准备 ✓':'准备并开始'}（${S.readyCount}/${S.readyTotal}）</button>`;
+  }else if(isHost){
+    bottom=`<button class="btn" onclick="startGame()">开始游戏（${S.players.length}人）</button>`;
+  }else{
+    bottom=`<p class="center muted">等待法官开始游戏…</p>`;
+  }
   return `<div class="card">
     <div class="title-c"><div class="big">🛋️</div><div>等待玩家加入</div></div>
     <div class="codebig">${S.code}</div>
     <div class="center" style="margin:4px 0 2px"><button class="btn ghost sm" onclick="copyCode()">复制房间号</button></div>
-    <p class="center muted">把房间号告诉朋友，让他们加入</p>
+    <p class="center muted">${S.noJudge?'所有人都准备好后自动开始':'把房间号告诉朋友，让他们加入'}</p>
     <div class="players-c">${ps}</div>
-    <p class="center muted" style="margin-top:8px">已加入 ${S.players.length} 人</p>
+    <p class="center muted" style="margin-top:8px">已加入 ${S.players.length} 人${S.noJudge?`，已准备 ${S.readyCount} 人`:''}</p>
   </div>
   <div class="foot" style="margin-top:12px">
-    ${isHost?`<button class="btn" onclick="startGame()">开始游戏（${S.players.length}人）</button>`:`<p class="center muted">等待法官开始游戏…</p>`}
+    ${bottom}
     <button class="btn ghost" style="margin-top:8px" onclick="leaveRoom()">${isHost?'退出并销毁房间':'离开房间'}</button>
   </div>`;
 }
@@ -408,7 +420,7 @@ function renderNightWolf(){
   }else{
     body=`<div class="prompt center">第 ${S.day} 夜 · <b>${n?n.stepName:''}</b><br>等待其他角色行动，请稍候…<br><br>（你是 ${ROLE_DEFS[S.you.role].name}，当前无需操作）</div>`;
   }
-  return `<div class="title-c"><span class="big">🌙</span><div>第 ${S.day} 夜</div><span class="badge nighttag">法官主持中</span></div>${body}${hostNightSkipBtn()}`;
+  return `<div class="title-c"><span class="big">🌙</span><div>第 ${S.day} 夜</div><span class="badge nighttag">${S.noJudge?'无需法官':'法官主持中'}</span></div>${body}${hostNightSkipBtn()}`;
 }
 function submitWolf(){act('wolf_kill',{target:selTarget});selTarget=null;}
 function submitGuard(){act('guard',{target:selTarget});selTarget=null;}
@@ -448,7 +460,7 @@ function renderNightKill(){
   }else{
     body=`<div class="prompt center">第 ${S.day} 夜 · <b>${n?n.stepName:''}</b><br>等待其他角色行动，请稍候…<br><br>（你是 ${ROLE_DEFS[S.you.role].name}，当前无需操作）</div>`;
   }
-  return `<div class="title-c"><span class="big">🌙</span><div>第 ${S.day} 夜</div><span class="badge nighttag">法官主持中</span></div>${body}${hostNightSkipBtn()}`;
+  return `<div class="title-c"><span class="big">🌙</span><div>第 ${S.day} 夜</div><span class="badge nighttag">${S.noJudge?'无需法官':'法官主持中'}</span></div>${body}${hostNightSkipBtn()}`;
 }
 function submitButterfly(){act('butterfly',{target:selTarget});selTarget=null;}
 function submitSniper(){act('sniper',{target:selTarget});selTarget=null;}
@@ -468,7 +480,9 @@ function renderDay(){
   if(S.mode==='killgame' && S.you.role==='terrorist' && !S.terroristBombUsed && S.you.alive){
     extra+=`<button class="btn ghost" style="margin-top:8px" onclick="openBomb()">💣 引爆（与一人同归于尽）</button>`;
   }
-  const hostBtn = S.you.id===S.hostId?`<button class="btn" style="margin-top:10px" onclick="startVote()">🗳️ 开始投票</button>`:`<p class="center muted" style="margin-top:10px">等待法官开始投票…</p>`;
+  const hostBtn = S.noJudge
+    ? `<button class="btn" style="margin-top:10px" onclick="act('proceed')">✅ 继续（${S.proceedCount}/${S.proceedNeed} 已确认，过半即进入投票）</button>`
+    : (S.you.id===S.hostId?`<button class="btn" style="margin-top:10px" onclick="startVote()">🗳️ 开始投票</button>`:`<p class="center muted" style="margin-top:10px">等待法官开始投票…</p>`);
   return `<div class="title-c"><span class="big">☀️</span><div>第 ${S.day} 天 · 天亮了</div></div>
     <div class="card"><div class="prompt">${dead}</div>${extra}${hostBtn}</div>
     <p class="center muted" style="margin-top:10px">大家开始发言讨论吧 👇</p>`;
@@ -477,11 +491,13 @@ async function startVote(){const r=await act('start_vote');}
 
 // ---------- 法官：断线/挂机兜底控制 ----------
 function hostNightSkipBtn(){
+  if(S.noJudge) return '';
   if(S.you.id!==S.hostId) return '';
   return `<button class="btn ghost" style="margin-top:10px" onclick="hostSkip()">⏭️ 法官：跳过当前步骤</button>`;
 }
 function hostSkip(){act('host_skip');}
 function hostForceVoteBtn(){
+  if(S.noJudge) return `<button class="btn ghost" style="margin-top:10px" onclick="act('proceed')">✅ 继续（${S.proceedCount}/${S.proceedNeed} 已确认，过半即结算）</button>`;
   if(S.you.id!==S.hostId) return '';
   return `<button class="btn ghost" style="margin-top:10px" onclick="hostForceVote()">⏭️ 法官：结束投票并结算</button>`;
 }
