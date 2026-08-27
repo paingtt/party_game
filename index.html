@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>聚会狼人杀 · 联网版</title>
+<title>聚会桌游 · 联网版</title>
 <style>
   :root{
     --bg:#0f1226; --bg2:#171a36; --card:#1e2244; --card2:#262b55;
@@ -73,13 +73,13 @@
   .rolesum{display:flex;flex-direction:column;gap:6px;margin-top:10px;}
   .rolesum .ri{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;}
   .rolesum .ri .re{font-size:16px;}
-  /* chat */
   #chatPanel{margin-top:auto;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;display:none;flex-direction:column;gap:6px;}
   #chatLog{max-height:120px;overflow:auto;font-size:13px;line-height:1.5;}
   #chatLog .cm{margin-bottom:3px;}
   #chatLog .cn{color:var(--acc);font-weight:700;}
   #chatInput{display:flex;gap:6px;}
   #chatInput input{border-radius:20px;padding:9px 12px;}
+  #chatInput.disabled{opacity:.4;pointer-events:none;}
   .toast{position:fixed;left:50%;bottom:70px;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:11px 16px;border-radius:11px;font-size:13px;z-index:60;opacity:0;transition:.3s;pointer-events:none;max-width:90%;text-align:center;}
   .toast.show{opacity:1;}
   .modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;padding:20px;z-index:50;}
@@ -90,23 +90,29 @@
   .codebig{font-size:34px;font-weight:900;letter-spacing:4px;color:var(--acc);text-align:center;margin:6px 0;}
   .players-c{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
   .pc{background:var(--card2);border:1px solid var(--line);border-radius:20px;padding:5px 11px;font-size:13px;}
+  .modebar{display:flex;gap:8px;margin-bottom:6px;}
+  .modebar .chip{flex:1;text-align:center;}
 </style>
 </head>
 <body>
 <div id="app">
   <header>
-    <div class="logo"><span>🌙</span> 聚会狼人杀</div>
+    <div class="logo"><span>🎲</span> 聚会桌游</div>
     <button class="topbtn" id="logBtn" onclick="openLog()" style="display:none">📜 日志</button>
   </header>
 
   <!-- HOME -->
   <section id="home" class="screen active">
-    <h1>联网狼人杀</h1>
+    <h1>联网桌游</h1>
     <p class="sub">一人建房，其他人用自己手机输入房间号加入。每人只在自己手机上看身份、行动与发言。</p>
     <div class="card">
       <div class="field">
         <div class="label">你的昵称</div>
         <input id="homeName" placeholder="例如：小明" maxlength="12">
+      </div>
+      <div class="field">
+        <div class="label"><span>选择模式</span></div>
+        <div class="modebar" id="modebar"></div>
       </div>
       <div class="field">
         <div class="label">快速预设</div>
@@ -152,37 +158,77 @@
 </div>
 <div class="toast" id="toast"></div>
 
+<div class="modal-mask" id="bombModal">
+  <div class="modal">
+    <div class="mt" style="text-align:center">💣 引爆</div>
+    <div class="md">选择要同归于尽的目标（引爆后你与目标同时出局；若目标是杀手方，则只有你出局）。本局仅一次。</div>
+    <div id="bombTargets" class="pgrid"></div>
+    <button class="btn ghost" style="margin-top:12px" onclick="document.getElementById('bombModal').classList.remove('show')">取消</button>
+  </div>
+</div>
+
 <script>
-const ROLE_DEFS = {
-  werewolf:{name:'狼人',emoji:'🐺',team:'wolf'},
-  seer:{name:'预言家',emoji:'🔮',team:'good'},
-  witch:{name:'女巫',emoji:'🧪',team:'good'},
-  hunter:{name:'猎人',emoji:'🏹',team:'good'},
-  guard:{name:'守卫',emoji:'🛡️',team:'good'},
-  villager:{name:'平民',emoji:'👨',team:'good'},
+const MODES = {
+  werewolf: {
+    label: '狼人杀',
+    roles: {
+      werewolf:{name:'狼人',emoji:'🐺',team:'wolf'},
+      seer:{name:'预言家',emoji:'🔮',team:'good'},
+      witch:{name:'女巫',emoji:'🧪',team:'good'},
+      hunter:{name:'猎人',emoji:'🏹',team:'good'},
+      guard:{name:'守卫',emoji:'🛡️',team:'good'},
+      villager:{name:'平民',emoji:'👨',team:'good'},
+    },
+    roleOrder: ['werewolf','seer','witch','hunter','guard','villager'],
+    presets: {
+      '6人':{werewolf:2,seer:1,witch:1,hunter:0,guard:0,villager:2},
+      '8人':{werewolf:2,seer:1,witch:1,hunter:1,guard:0,villager:3},
+      '9人':{werewolf:3,seer:1,witch:1,hunter:1,guard:0,villager:3},
+      '10人':{werewolf:3,seer:1,witch:1,hunter:1,guard:1,villager:3},
+    },
+  },
+  killgame: {
+    label: '杀人游戏',
+    roles: {
+      killer:{name:'杀手',emoji:'🔪',team:'wolf'},
+      sniper:{name:'狙击手',emoji:'🎯',team:'wolf'},
+      terrorist:{name:'恐怖分子',emoji:'💣',team:'wolf'},
+      police:{name:'警察',emoji:'🚓',team:'good'},
+      doctor:{name:'医生',emoji:'⚕️',team:'good'},
+      butterfly:{name:'花蝴蝶',emoji:'🦋',team:'good'},
+      oldman:{name:'森林老人',emoji:'🌲',team:'good'},
+      civilian:{name:'平民',emoji:'🧑',team:'good'},
+    },
+    roleOrder: ['killer','sniper','terrorist','police','doctor','butterfly','oldman','civilian'],
+    presets: {
+      '8人':{killer:2,sniper:1,terrorist:1,police:1,doctor:1,butterfly:1,oldman:1,civilian:1},
+      '10人':{killer:2,sniper:1,terrorist:1,police:2,doctor:1,butterfly:1,oldman:1,civilian:2},
+      '12人':{killer:3,sniper:1,terrorist:1,police:2,doctor:1,butterfly:1,oldman:1,civilian:3},
+    },
+  },
 };
-const ROLE_ORDER = ['werewolf','seer','witch','hunter','guard','villager'];
-const PRESETS = {
-  '6人':{werewolf:2,seer:1,witch:1,hunter:0,guard:0,villager:2},
-  '8人':{werewolf:2,seer:1,witch:1,hunter:1,guard:0,villager:3},
-  '9人':{werewolf:3,seer:1,witch:1,hunter:1,guard:0,villager:3},
-  '10人':{werewolf:3,seer:1,witch:1,hunter:1,guard:1,villager:3},
-};
+let currentMode='werewolf';
 let currentPreset='6人';
+let ROLE_DEFS = MODES.werewolf.roles; // 进入游戏后会按 S.mode 更新
 let me=null; // {code,playerId,isHost,name}
 let S=null; // latest view
 let selTarget=null, selVote=null, selVoteDone=false, wHeal=false, wPoison=null, lastCtx='';
 
 // ---------- setup UI ----------
 function buildHome(){
+  const mb=document.getElementById('modebar'); mb.innerHTML='';
+  Object.keys(MODES).forEach(k=>{
+    const b=document.createElement('div'); b.className='chip'+(k===currentMode?' on':''); b.textContent=MODES[k].label;
+    b.onclick=()=>{currentMode=k;currentPreset=Object.keys(MODES[k].presets)[0];buildHome();}; mb.appendChild(b);
+  });
   const pc=document.getElementById('presets'); pc.innerHTML='';
-  Object.keys(PRESETS).forEach(k=>{
+  Object.keys(MODES[currentMode].presets).forEach(k=>{
     const b=document.createElement('div'); b.className='chip'+(k===currentPreset?' on':''); b.textContent=k;
     b.onclick=()=>{currentPreset=k;applyPreset(k);}; pc.appendChild(b);
   });
   const sc=document.getElementById('steppers'); sc.innerHTML='';
-  ROLE_ORDER.forEach(r=>{
-    const d=ROLE_DEFS[r];
+  MODES[currentMode].roleOrder.forEach(r=>{
+    const d=MODES[currentMode].roles[r];
     const row=document.createElement('div'); row.className='stepper';
     row.innerHTML=`<div class="rname"><span class="remoji">${d.emoji}</span><span>${d.name}</span></div>
       <div class="step-ctrl"><button onclick="step('${r}',-1)">−</button><span class="num" id="num_${r}">0</span><button onclick="step('${r}',1)">+</button></div>`;
@@ -190,17 +236,18 @@ function buildHome(){
   });
   applyPreset(currentPreset);
 }
-function applyPreset(k){const p=PRESETS[k];ROLE_ORDER.forEach(r=>document.getElementById('num_'+r).textContent=p[r]||0);currentPreset=k;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.toggle('on',c.textContent===k));updateTotal();}
+function applyPreset(k){const p=MODES[currentMode].presets[k];MODES[currentMode].roleOrder.forEach(r=>document.getElementById('num_'+r).textContent=p[r]||0);currentPreset=k;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.toggle('on',c.textContent===k));document.getElementById('presetHint').textContent='';updateTotal();}
 function step(r,d){const el=document.getElementById('num_'+r);let v=parseInt(el.textContent)+d;if(v<0)v=0;if(v>20)v=20;el.textContent=v;currentPreset=null;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.remove('on'));document.getElementById('presetHint').textContent='自定义';updateTotal();}
-function updateTotal(){let t=0;ROLE_ORDER.forEach(r=>t+=parseInt(document.getElementById('num_'+r).textContent));document.getElementById('totalCount').textContent=t;}
-function getRoles(){const o={};ROLE_ORDER.forEach(r=>o[r]=parseInt(document.getElementById('num_'+r).textContent));return o;}
+function updateTotal(){let t=0;MODES[currentMode].roleOrder.forEach(r=>t+=parseInt(document.getElementById('num_'+r).textContent));document.getElementById('totalCount').textContent=t;}
+function getRoles(){const o={};MODES[currentMode].roleOrder.forEach(r=>o[r]=parseInt(document.getElementById('num_'+r).textContent));return o;}
 
 async function createRoom(){
   const name=(document.getElementById('homeName').value||'法官').trim();
-  const roles=getRoles();let total=0;ROLE_ORDER.forEach(r=>total+=roles[r]);
-  if(total<4){toast('至少需要 4 人');return;}
-  if(roles.werewolf<1){toast('至少 1 名狼人');return;}
-  const r=await post('/api/create',{name,roles});
+  const roles=getRoles();let total=0;MODES[currentMode].roleOrder.forEach(r=>total+=roles[r]);
+  if(total<MODES[currentMode].minPlayers){toast('至少需要 '+MODES[currentMode].minPlayers+' 人');return;}
+  const wolves=MODES[currentMode].roleOrder.filter(r=>MODES[currentMode].roles[r].team==='wolf').reduce((s,r)=>s+roles[r],0);
+  if(wolves<1){toast('至少 1 名杀手/狼人');return;}
+  const r=await post('/api/create',{name,roles,mode:currentMode});
   if(!r.ok){toast(r.error||'创建失败');return;}
   me={code:r.code,playerId:r.playerId,isHost:true,name};
   enterGame();
@@ -234,19 +281,22 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 // ---------- render ----------
 function render(){
   if(!S)return;
+  ROLE_DEFS = MODES[S.mode].roles;
   const ctx=S.phase+'#'+S.day;
   if(ctx!==lastCtx){ selTarget=null; selVote=null; selVoteDone=false; wHeal=false; wPoison=null; lastCtx=ctx; }
   renderMe();
   const stage=document.getElementById('stage');
   if(S.phase==='lobby') stage.innerHTML=renderLobby();
-  else if(S.phase==='night') stage.innerHTML=renderNight();
+  else if(S.phase==='night') stage.innerHTML=(S.mode==='killgame')?renderNightKill():renderNightWolf();
   else if(S.phase==='day') stage.innerHTML=renderDay();
   else if(S.phase==='vote') stage.innerHTML=renderVote();
   else if(S.phase==='hunter') stage.innerHTML=renderHunter();
   else if(S.phase==='end') stage.innerHTML=renderEnd();
-  // chat panel visibility
   const cp=document.getElementById('chatPanel');
   cp.style.display=(S.phase==='day'||S.phase==='vote'||S.phase==='hunter')?'flex':'none';
+  // 被森林老人禁言则禁用发言
+  const ci=document.getElementById('chatInput');
+  ci.classList.toggle('disabled', !!(S.silencedId && S.you.id===S.silencedId));
   renderChat();
 }
 function renderMe(){
@@ -254,7 +304,7 @@ function renderMe(){
   const emo = S.you.role? d.emoji : '❓';
   const rname = S.you.role? d.name : '未分配';
   const team = S.you.team==='wolf'?'b-wolf':'b-good';
-  const teamTxt = S.you.team==='wolf'?'狼人阵营':'好人阵营';
+  const teamTxt = S.you.team==='wolf'?(S.mode==='killgame'?'杀手阵营':'狼人阵营'):'好人阵营';
   document.getElementById('meBar').innerHTML=`
     <div class="av">${emo}</div>
     <div><div class="mt">${S.you.name} · 房间 ${S.code}</div><div class="mn">${rname}${S.you.alive?'':' · 已出局'}</div></div>
@@ -262,8 +312,9 @@ function renderMe(){
 }
 function aliveList(){return S.players.filter(p=>p.alive);}
 function pbtn(p,sel,onClick,disabled){
+  const rd = ROLE_DEFS[p.role] || (currentMode==='killgame'?MODES.killgame.roles.civilian:MODES.werewolf.roles.villager);
   return `<div class="pbtn ${sel?'sel':''} ${disabled?'dead':''}" ${onClick?`onclick="${onClick}"`:''}>
-    <div class="pemoji">${ROLE_DEFS[p.role?p.role:'villager'].emoji}</div>
+    <div class="pemoji">${rd.emoji}</div>
     <div class="pid">#${p.id}</div><div class="pname">${escapeHtml(p.name)}</div></div>`;
 }
 function escapeHtml(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
@@ -283,9 +334,9 @@ function renderLobby(){
 }
 async function startGame(){const rr=await post('/api/start',{code:me.code,playerId:me.playerId});if(!rr.ok)toast(rr.error||'开始失败');}
 
-function renderNight(){
-  const n=S.night;
-  let body='';
+// ---------- night: werewolf ----------
+function renderNightWolf(){
+  const n=S.night; let body='';
   if(S.myAction){
     const a=S.myAction;
     if(a.type==='wolf'){
@@ -337,17 +388,67 @@ function submitGuard(){act('guard',{target:selTarget});selTarget=null;}
 function submitSeer(){act('seer',{target:selTarget});selTarget=null;}
 function submitWitch(){act('witch',{heal:wHeal,poison:wPoison});wHeal=false;wPoison=null;}
 
+// ---------- night: killgame ----------
+function renderNightKill(){
+  const n=S.night; let body='';
+  if(S.myAction){
+    const a=S.myAction;
+    if(a.type==='butterfly'){
+      body=`<div class="prompt"><b>🦋 花蝴蝶护体</b><br>选择要保护的人（不能保自己）。被保护者今晚免疫被杀/被狙/被针；但若你今晚死亡，被保护者也会同死。</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="foot" style="margin-top:10px"><button class="btn ghost sm" onclick="selTarget=null;render();">放弃</button><button class="btn" ${selTarget==null?'disabled':''} onclick="submitButterfly()">确认护体</button></div>`;
+    }else if(a.type==='sniper'){
+      body=`<div class="prompt"><b>🎯 狙击手狙击</b><br>选择今晚要狙杀的人（可狙自己）。</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="foot" style="margin-top:10px"><button class="btn ghost sm" onclick="selTarget=null;render();">放弃</button><button class="btn" ${selTarget==null?'disabled':''} onclick="submitSniper()">确认狙击</button></div>`;
+    }else if(a.type==='killer'){
+      body=`<div class="prompt"><b>🔪 杀手杀人</b><br>与同伴商议，选择今晚要击杀的人。</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="foot" style="margin-top:10px"><button class="btn ghost sm" onclick="selTarget=null;render();">不杀</button><button class="btn" ${selTarget==null?'disabled':''} onclick="submitKiller()">确认击杀</button></div>`;
+    }else if(a.type==='doctor'){
+      const victim=a.victim?`今晚倒下的是 <b>${a.victim}</b>。`:'今晚暂时无人倒下。';
+      body=`<div class="prompt"><b>⚕️ 医生救治</b><br>${victim}<br>选择一名玩家：若其被刀/狙则可救活；否则累计一次空针，两次空针将其扎死。</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="foot" style="margin-top:10px"><button class="btn" ${selTarget==null?'disabled':''} onclick="submitDoctor()">确认</button></div>`;
+    }else if(a.type==='police'){
+      if(a.done){ const res=a.result==='wolf'?'🌑 杀手阵营':'🌞 好人阵营'; body=`<div class="prompt center"><b>🚓 查验结果</b><br><span style="font-size:18px">${res}</span><br>（等待其他角色行动…）</div>`; }
+      else body=`<div class="prompt"><b>🚓 警察指认</b><br>选择一名玩家进行查验。</div><div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div><div class="foot" style="margin-top:10px"><button class="btn" ${selTarget==null?'disabled':''} onclick="submitPolice()">查验</button></div>`;
+    }else if(a.type==='oldman'){
+      body=`<div class="prompt"><b>🌲 森林老人禁言</b><br>选择一名玩家，其明天白天不能发言（不能禁自己）。</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="foot" style="margin-top:10px"><button class="btn ghost sm" onclick="selTarget=null;render();">放弃</button><button class="btn" ${selTarget==null?'disabled':''} onclick="submitOldman()">确认禁言</button></div>`;
+    }
+  }else{
+    body=`<div class="prompt center">第 ${S.day} 夜 · <b>${n?n.stepName:''}</b><br>等待其他角色行动，请稍候…<br><br>（你是 ${ROLE_DEFS[S.you.role].name}，当前无需操作）</div>`;
+  }
+  return `<div class="title-c"><span class="big">🌙</span><div>第 ${S.day} 夜</div><span class="badge nighttag">法官主持中</span></div>${body}`;
+}
+function submitButterfly(){act('butterfly',{target:selTarget});selTarget=null;}
+function submitSniper(){act('sniper',{target:selTarget});selTarget=null;}
+function submitKiller(){act('killer',{target:selTarget});selTarget=null;}
+function submitDoctor(){act('doctor',{target:selTarget});selTarget=null;}
+function submitPolice(){act('police',{target:selTarget});selTarget=null;}
+function submitOldman(){act('oldman',{target:selTarget});selTarget=null;}
+
+// ---------- day ----------
 function renderDay(){
   let dead='';
   if(S.lastDeaths.length===0) dead='昨夜是<b>平安夜</b>，没有人出局。';
   else dead='昨夜倒下：<br>'+S.lastDeaths.map(d=>`<b>${escapeHtml(d.name)}</b>（${d.role}）`).join('、');
+  let extra='';
+  if(S.silencedName) extra+=`<div class="prompt" style="margin-top:8px">🌲 森林老人禁言了 <b>${escapeHtml(S.silencedName)}</b>，其白天不能发言。</div>`;
+  // 恐怖分子爆人按钮（杀人游戏）
+  if(S.mode==='killgame' && S.you.role==='terrorist' && !S.terroristBombUsed && S.you.alive){
+    extra+=`<button class="btn ghost" style="margin-top:8px" onclick="openBomb()">💣 引爆（与一人同归于尽）</button>`;
+  }
   const hostBtn = S.you.id===S.hostId?`<button class="btn" style="margin-top:10px" onclick="startVote()">🗳️ 开始投票</button>`:`<p class="center muted" style="margin-top:10px">等待法官开始投票…</p>`;
   return `<div class="title-c"><span class="big">☀️</span><div>第 ${S.day} 天 · 天亮了</div></div>
-    <div class="card"><div class="prompt">${dead}</div>${hostBtn}</div>
+    <div class="card"><div class="prompt">${dead}</div>${extra}${hostBtn}</div>
     <p class="center muted" style="margin-top:10px">大家开始发言讨论吧 👇</p>`;
 }
 async function startVote(){const r=await act('start_vote');}
 
+// ---------- vote ----------
 function renderVote(){
   const alive=aliveList();
   const meAlive=S.you.alive;
@@ -355,7 +456,6 @@ function renderVote(){
   if(!meAlive){
     body=`<div class="prompt center">你已出局，等待其他玩家投票（${S.votesCount}/${S.aliveCount}）…</div>`;
   }else{
-    const voted = S.votesCount; // 不含自己是否已投（服务端未单独下发），用本地判断
     if(selVoteDone){
       body=`<div class="prompt center">✅ 你已投票，等待其他玩家（${S.votesCount}/${S.aliveCount}）…</div>`;
     }else{
@@ -367,10 +467,16 @@ function renderVote(){
         </div>`;
     }
   }
-  return `<div class="title-c"><span class="big">🗳️</span><div>第 ${S.day} 天 · 投票</div></div>${body}`;
+  // 恐怖分子在投票阶段也能引爆
+  let bomb='';
+  if(S.mode==='killgame' && S.you.role==='terrorist' && !S.terroristBombUsed && S.you.alive){
+    bomb=`<button class="btn ghost" style="margin-top:10px" onclick="openBomb()">💣 引爆（与一人同归于尽）</button>`;
+  }
+  return `<div class="title-c"><span class="big">🗳️</span><div>第 ${S.day} 天 · 投票</div></div>${body}${bomb}`;
 }
 function doVote(){ if(selVote===undefined)return; selVoteDone=true; act('vote',{target:selVote}); }
 
+// ---------- hunter (werewolf only) ----------
 function renderHunter(){
   if(S.hunt && S.hunt.waiting){
     return `<div class="title-c"><span class="big">🏹</span><div>猎人开枪</div></div>
@@ -388,8 +494,14 @@ function renderHunter(){
   return `<div class="prompt center">处理猎人…</div>`;
 }
 
+// ---------- end ----------
+function openBomb(){
+  const box=document.getElementById('bombTargets');
+  box.innerHTML=aliveList().filter(p=>p.id!==S.you.id).map(p=>`<div class="pbtn" onclick="act('terrorist_bomb',{target:'${p.id}'});document.getElementById('bombModal').classList.remove('show');"><div class="pemoji">${ROLE_DEFS[p.role?p.role:'civilian'].emoji}</div><div class="pname">${escapeHtml(p.name)}</div></div>`).join('');
+  document.getElementById('bombModal').classList.add('show');
+}
 function renderEnd(){
-  const win=S.result==='good'?'🎉 好人阵营胜利！':'🐺 狼人阵营胜利！';
+  const win=S.result==='good'?(S.mode==='killgame'?'🎉 好人阵营胜利！':'🎉 好人阵营胜利！'):(S.mode==='killgame'?'🔪 杀手阵营胜利！':'🐺 狼人阵营胜利！');
   const cls=S.result==='good'?'b-good':'b-wolf';
   const rs=S.players.map(p=>{const d=ROLE_DEFS[p.role];return `<div class="ri"><span class="re">${d.emoji}</span><span style="flex:1">${escapeHtml(p.name)}</span><span class="${p.team==='wolf'?'b-wolf':'b-good'}">${d.name}</span><span class="muted">${p.alive?'存活':'出局'}</span></div>`;}).join('');
   return `<div class="title-c"><div class="codebig" style="font-size:26px;color:${S.result==='good'?'var(--good)':'var(--wolf)'}">${win}</div></div>
@@ -397,7 +509,7 @@ function renderEnd(){
     <div class="foot" style="margin-top:12px"><button class="btn" onclick="location.reload()">返回首页</button></div>`;
 }
 
-// chat
+// ---------- chat ----------
 function renderChat(){
   const box=document.getElementById('chatLog');
   if(!S||!S.chat)return;
@@ -406,7 +518,7 @@ function renderChat(){
 }
 async function sendChat(){const t=document.getElementById('chatText').value.trim();if(!t)return;document.getElementById('chatText').value='';await act('chat',{text:t});}
 
-// log
+// ---------- log ----------
 function openLog(){const c=document.getElementById('logContent');c.innerHTML=(S&&S.log)?S.log.slice().reverse().map(m=>`<div class="lm">[第${m.day}轮] ${escapeHtml(m.msg)}</div>`).join(''):'暂无';document.getElementById('logModal').classList.add('show');}
 
 buildHome();

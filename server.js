@@ -1,22 +1,57 @@
-// 聚会狼人杀 · 联网版 Demo 后端
+// 聚会桌游 · 联网版 Demo 后端（狼人杀 / 杀人游戏 双模式）
 // 零依赖：Node 内置 http + SSE 实时推送
 // 本地运行：node server.js  （默认端口 3000）
-// 云端部署：监听 process.env.PORT，可直接部署到 Render / Koyeb 等免费 Node 平台
+// 云端部署：监听 process.env.PORT，可直接部署到 Render / SnapDeploy 等免费 Node 平台
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
 const PORT = process.env.PORT || 3000;
-const ROLE_DEFS = {
-  werewolf: { name: '狼人', emoji: '🐺', team: 'wolf' },
-  seer:     { name: '预言家', emoji: '🔮', team: 'good' },
-  witch:    { name: '女巫', emoji: '🧪', team: 'good' },
-  hunter:   { name: '猎人', emoji: '🏹', team: 'good' },
-  guard:    { name: '守卫', emoji: '🛡️', team: 'good' },
-  villager: { name: '平民', emoji: '👨', team: 'good' },
+
+// ---------- 模式配置 ----------
+// 每个模式定义：角色、角色顺序（用于建房步进器）、预设、夜间步骤顺序、步骤名、最小人数。
+const MODES = {
+  werewolf: {
+    label: '狼人杀',
+    roles: {
+      werewolf: { name: '狼人', emoji: '🐺', team: 'wolf' },
+      seer:     { name: '预言家', emoji: '🔮', team: 'good' },
+      witch:    { name: '女巫', emoji: '🧪', team: 'good' },
+      hunter:   { name: '猎人', emoji: '🏹', team: 'good' },
+      guard:    { name: '守卫', emoji: '🛡️', team: 'good' },
+      villager: { name: '平民', emoji: '👨', team: 'good' },
+    },
+    roleOrder: ['werewolf', 'seer', 'witch', 'hunter', 'guard', 'villager'],
+    presets: {
+      '6人':  { werewolf: 2, seer: 1, witch: 1, hunter: 0, guard: 0, villager: 2 },
+      '8人':  { werewolf: 2, seer: 1, witch: 1, hunter: 1, guard: 0, villager: 3 },
+      '9人':  { werewolf: 3, seer: 1, witch: 1, hunter: 1, guard: 0, villager: 3 },
+      '10人': { werewolf: 3, seer: 1, witch: 1, hunter: 1, guard: 1, villager: 3 },
+    },
+    minPlayers: 4, minWolves: 1,
+  },
+  killgame: {
+    label: '杀人游戏',
+    roles: {
+      killer:    { name: '杀手', emoji: '🔪', team: 'wolf' },
+      sniper:    { name: '狙击手', emoji: '🎯', team: 'wolf' },
+      terrorist: { name: '恐怖分子', emoji: '💣', team: 'wolf' },
+      police:    { name: '警察', emoji: '🚓', team: 'good' },
+      doctor:    { name: '医生', emoji: '⚕️', team: 'good' },
+      butterfly: { name: '花蝴蝶', emoji: '🦋', team: 'good' },
+      oldman:    { name: '森林老人', emoji: '🌲', team: 'good' },
+      civilian:  { name: '平民', emoji: '🧑', team: 'good' },
+    },
+    roleOrder: ['killer', 'sniper', 'terrorist', 'police', 'doctor', 'butterfly', 'oldman', 'civilian'],
+    presets: {
+      '8人':  { killer: 2, sniper: 1, terrorist: 1, police: 1, doctor: 1, butterfly: 1, oldman: 1, civilian: 1 },
+      '10人': { killer: 2, sniper: 1, terrorist: 1, police: 2, doctor: 1, butterfly: 1, oldman: 1, civilian: 2 },
+      '12人': { killer: 3, sniper: 1, terrorist: 1, police: 2, doctor: 1, butterfly: 1, oldman: 1, civilian: 3 },
+    },
+    minPlayers: 6, minWolves: 1,
+  },
 };
-const ROLE_ORDER = ['werewolf', 'seer', 'witch', 'hunter', 'guard', 'villager'];
 
 const rooms = new Map(); // code -> room
 
@@ -32,24 +67,36 @@ function genCode() {
 function uid() { return Math.random().toString(36).slice(2, 10); }
 function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
-function expandRoles(cfg) {
+function expandRoles(cfg, order) {
   const list = [];
-  ROLE_ORDER.forEach(r => { for (let i = 0; i < (cfg[r] || 0); i++) list.push(r); });
+  order.forEach(r => { for (let i = 0; i < (cfg[r] || 0); i++) list.push(r); });
   return list;
 }
 function alivePlayers(room) { return room.players.filter(p => p.alive); }
+function aliveTeam(room, team) { return room.players.filter(p => p.alive && p.team === team); }
 function nameOf(room, id) { const p = room.players.find(x => x.id === id); return p ? p.name : '?'; }
-function aliveWolves(room) { return room.players.filter(p => p.isWolf && p.alive); }
 
 function buildNightSteps(room) {
   const steps = [];
-  if (aliveWolves(room).length > 0) steps.push('wolf');
-  if (room.players.some(p => p.role === 'guard' && p.alive)) steps.push('guard');
-  if (room.players.some(p => p.role === 'seer' && p.alive)) steps.push('seer');
-  if (room.players.some(p => p.role === 'witch' && p.alive)) steps.push('witch');
+  if (room.mode === 'werewolf') {
+    if (aliveTeam(room, 'wolf').length > 0) steps.push('wolf');
+    if (room.players.some(p => p.role === 'guard' && p.alive)) steps.push('guard');
+    if (room.players.some(p => p.role === 'seer' && p.alive)) steps.push('seer');
+    if (room.players.some(p => p.role === 'witch' && p.alive)) steps.push('witch');
+  } else {
+    if (room.players.some(p => p.role === 'butterfly' && p.alive)) steps.push('butterfly');
+    if (room.players.some(p => p.role === 'sniper' && p.alive)) steps.push('sniper');
+    if (room.players.some(p => p.role === 'killer' && p.alive)) steps.push('killer');
+    if (room.players.some(p => p.role === 'doctor' && p.alive)) steps.push('doctor');
+    if (room.players.some(p => p.role === 'police' && p.alive)) steps.push('police');
+    if (room.players.some(p => p.role === 'oldman' && p.alive)) steps.push('oldman');
+  }
   return steps;
 }
-const STEP_NAME = { wolf: '狼人行动', guard: '守卫行动', seer: '预言家查验', witch: '女巫行动' };
+const STEP_NAME = {
+  werewolf: { wolf: '狼人行动', guard: '守卫行动', seer: '预言家查验', witch: '女巫行动' },
+  killgame: { butterfly: '花蝴蝶护体', sniper: '狙击手狙击', killer: '杀手杀人', doctor: '医生救治', police: '警察指认', oldman: '森林老人禁言' },
+};
 
 function log(room, msg) {
   room.log.push({ day: room.day, t: Date.now(), msg });
@@ -60,16 +107,35 @@ function kill(room, id, cause) {
   const p = room.players.find(x => x.id === id);
   if (!p || !p.alive) return;
   p.alive = false;
-  const tag = cause === 'poison' ? '被女巫毒杀' : cause === 'vote' ? '被投票放逐' : cause === 'hunter' ? '被猎人开枪' : '夜晚被击杀';
-  log(room, `${p.name}（${ROLE_DEFS[p.role].name}）${tag}。`);
-  if (p.role === 'hunter' && cause !== 'poison') room.hunter = { pending: true, deadId: id };
+  const RD = MODES[room.mode].roles;
+  let tag;
+  if (cause === 'poison') tag = '被女巫毒杀';
+  else if (cause === 'bomb') tag = '被恐怖分子引爆';
+  else if (cause === 'linked') tag = '与花蝴蝶同归于尽';
+  else if (cause === 'vote') tag = '被投票放逐';
+  else if (cause === 'hunter') tag = '被猎人开枪';
+  else tag = '夜晚被击杀';
+  log(room, `${p.name}（${RD[p.role].name}）${tag}。`);
+  if (room.mode === 'werewolf' && p.role === 'hunter' && cause !== 'poison') room.hunter = { pending: true, deadId: id };
 }
 
 function checkWin(room) {
+  if (room.mode === 'werewolf') return checkWinWerewolf(room);
+  return checkWinKillgame(room);
+}
+function checkWinWerewolf(room) {
   const wolves = room.players.filter(p => p.isWolf && p.alive).length;
   const good = room.players.filter(p => !p.isWolf && p.alive).length;
   if (wolves === 0) return 'good';
   if (wolves >= good) return 'wolf';
+  return null;
+}
+function checkWinKillgame(room) {
+  const wolf = room.players.filter(p => p.alive && p.team === 'wolf').length;
+  const good = room.players.filter(p => p.alive && p.team === 'good').length;
+  const goodSpecial = room.players.filter(p => p.alive && p.team === 'good' && p.role !== 'civilian').length;
+  if (wolf === 0) return 'good';
+  if (goodSpecial === 0 || wolf >= good) return 'wolf';
   return null;
 }
 
@@ -77,52 +143,80 @@ function checkWin(room) {
 function view(room, pid) {
   const me = room.players.find(p => p.id === pid);
   if (!me) return { error: 'not_found' };
+  const RD = MODES[room.mode].roles;
   const players = room.players.map(p => ({
     id: p.id, name: p.name, alive: p.alive,
     role: (room.phase === 'end') ? p.role : (p.id === pid ? p.role : null),
     isWolf: (room.phase === 'end') ? p.isWolf : (p.id === pid ? p.isWolf : null),
   }));
-  let myAction = null;
-  if (room.phase === 'night') {
-    const step = room.night.steps[room.night.step];
-    const a = room.night;
+  const myAction = buildMyAction(room, me);
+  let hunter = null;
+  if (room.mode === 'werewolf' && room.phase === 'hunter' && room.hunter && room.hunter.pending) {
+    const h = room.players.find(p => p.id === room.hunter.deadId);
+    if (h && h.id === pid) hunter = { targets: alivePlayers(room).map(p => ({ id: p.id, name: p.name })) };
+    else hunter = { waiting: true };
+  }
+  return {
+    mode: room.mode,
+    code: room.code, phase: room.phase, day: room.day, hostId: room.hostId,
+    you: { id: me.id, name: me.name, role: me.role, team: me.team, alive: me.alive, isWolf: me.isWolf },
+    players, myAction,
+    night: (room.phase === 'night') ? { steps: room.night.steps, step: room.night.step, stepName: (STEP_NAME[room.mode][room.night.steps[room.night.step]] || ''), total: room.night.steps.length } : null,
+    hunt: hunter,
+    lastDeaths: room.lastDeaths || [],
+    votesCount: Object.keys(room.votes).length,
+    aliveCount: alivePlayers(room).length,
+    silencedName: room.silenced ? nameOf(room, room.silenced) : null,
+    silencedId: room.silenced || null,
+    terroristBombUsed: !!room.terroristBombUsed,
+    chat: room.chat.slice(-60),
+    log: room.log.slice(-25),
+    result: room.phase === 'end' ? room.result : null,
+  };
+}
+
+function buildMyAction(room, me) {
+  if (room.phase !== 'night') return null;
+  const a = room.night;
+  const step = a.steps[a.step];
+  const alive = alivePlayers(room).map(p => ({ id: p.id, name: p.name }));
+  if (room.mode === 'werewolf') {
     if (step === 'wolf' && me.isWolf) {
-      myAction = { type: 'wolf', targets: alivePlayers(room).filter(p => !p.isWolf).map(p => ({ id: p.id, name: p.name })), submitted: !!a.wolfVotes[pid] };
+      return { type: 'wolf', targets: alive.filter(p => !p.isWolf), submitted: !!a.wolfVotes[me.id] };
     } else if (step === 'guard' && me.role === 'guard') {
-      myAction = { type: 'guard', targets: alivePlayers(room).filter(p => p.id !== room.guardLast).map(p => ({ id: p.id, name: p.name })), submitted: a.guardTarget != null };
+      return { type: 'guard', targets: alive.filter(p => p.id !== room.guardLast), submitted: a.guardTarget != null };
     } else if (step === 'seer' && me.role === 'seer') {
-      if (a.seerDone) myAction = { type: 'seer', done: true, result: a.seerResult };
-      else myAction = { type: 'seer', targets: alivePlayers(room).map(p => ({ id: p.id, name: p.name })), submitted: false };
+      if (a.seerDone) return { type: 'seer', done: true, result: a.seerResult };
+      return { type: 'seer', targets: alive, submitted: false };
     } else if (step === 'witch' && me.role === 'witch') {
-      myAction = {
+      return {
         type: 'witch',
         victim: a.wolfTarget != null ? nameOf(room, a.wolfTarget) : null,
         healAvail: room.witch.heal, poisonAvail: room.witch.poison,
         submitted: a.witchDone,
       };
     }
-  }
-  let hunter = null;
-  if (room.phase === 'hunter' && room.hunter && room.hunter.pending) {
-    const h = room.players.find(p => p.id === room.hunter.deadId);
-    if (h && h.id === pid) {
-      hunter = { targets: alivePlayers(room).map(p => ({ id: p.id, name: p.name })) };
-    } else {
-      hunter = { waiting: true };
+    return null;
+  } else {
+    if (step === 'butterfly' && me.role === 'butterfly') {
+      return { type: 'butterfly', targets: alive.filter(p => p.id !== me.id), submitted: a.butterflyTarget != null };
+    } else if (step === 'sniper' && me.role === 'sniper') {
+      return { type: 'sniper', targets: alive, submitted: a.sniperTarget != null };
+    } else if (step === 'killer' && me.role === 'killer') {
+      return { type: 'killer', targets: alive.filter(p => p.team !== 'wolf'), submitted: !!a.killerVotes[me.id] };
+    } else if (step === 'doctor' && me.role === 'doctor') {
+      let victim = null;
+      if (a.killerTarget != null) victim = nameOf(room, a.killerTarget);
+      else if (a.sniperTarget != null) victim = nameOf(room, a.sniperTarget);
+      return { type: 'doctor', targets: alive, victim, submitted: a.doctorDone };
+    } else if (step === 'police' && me.role === 'police') {
+      if (a.policeDone) return { type: 'police', done: true, result: a.policeResult };
+      return { type: 'police', targets: alive, submitted: false };
+    } else if (step === 'oldman' && me.role === 'oldman') {
+      return { type: 'oldman', targets: alive.filter(p => p.id !== me.id), submitted: a.oldmanDone };
     }
+    return null;
   }
-  return {
-    code: room.code, phase: room.phase, day: room.day, hostId: room.hostId, you: { id: me.id, name: me.name, role: me.role, team: me.team, alive: me.alive, isWolf: me.isWolf },
-    players, myAction,
-    night: (room.phase === 'night') ? { step: room.night.step, stepName: STEP_NAME[room.night.steps[room.night.step]] || '', total: room.night.steps.length } : null,
-    hunt: hunter,
-    lastDeaths: room.lastDeaths || [],
-    votesCount: Object.keys(room.votes).length,
-    aliveCount: alivePlayers(room).length,
-    chat: room.chat.slice(-60),
-    log: room.log.slice(-25),
-    result: room.phase === 'end' ? room.result : null,
-  };
 }
 
 function broadcast(room) {
@@ -133,27 +227,41 @@ function broadcast(room) {
 
 // ---------- 游戏流程 ----------
 function startGame(room) {
-  const list = expandRoles(room.roleConfig);
-  if (list.length < 4 || room.players.length !== list.length) return false;
+  const M = MODES[room.mode];
+  const list = expandRoles(room.roleConfig, M.roleOrder);
+  if (list.length < M.minPlayers || room.players.length !== list.length) return false;
   shuffle(list);
   room.players.forEach((p, i) => {
     const r = list[i];
-    p.role = r; p.team = ROLE_DEFS[r].team; p.isWolf = (r === 'werewolf');
+    p.role = r; p.team = M.roles[r].team; p.isWolf = (M.roles[r].team === 'wolf');
   });
   room.day = 1;
   room.lastDeaths = [];
+  room.emptyNeedles = {};
+  room.terroristBombUsed = false;
+  room.silenced = null;
   startNight(room, true);
-  log(room, `游戏开始，共 ${room.players.length} 人。`);
+  log(room, `游戏开始（${M.label}），共 ${room.players.length} 人。`);
   return true;
 }
 
 function resetNight(room) {
-  room.night = { steps: buildNightSteps(room), step: 0, wolfVotes: {}, guardTarget: null, seerTarget: null, seerDone: false, seerResult: null, witchHeal: false, witchPoison: null, witchDone: false };
+  const a = { steps: buildNightSteps(room), step: 0 };
+  if (room.mode === 'werewolf') {
+    a.wolfVotes = {}; a.guardTarget = null; a.seerTarget = null; a.seerDone = false; a.seerResult = null;
+    a.witchHeal = false; a.witchPoison = null; a.witchDone = false;
+  } else {
+    a.butterflyTarget = null; a.sniperTarget = null; a.killerVotes = {}; a.killerTarget = null;
+    a.doctorTarget = null; a.doctorDone = false; a.policeTarget = null; a.policeDone = false; a.policeResult = null;
+    a.oldmanTarget = null; a.oldmanDone = false;
+  }
+  room.night = a;
 }
 
 function startNight(room, first) {
   room.phase = 'night';
   room.lastDeaths = [];
+  room.silenced = null;
   resetNight(room);
   log(room, `第 ${room.day} 夜降临。`);
   broadcast(room);
@@ -163,11 +271,16 @@ function advanceNight(room) {
   const a = room.night;
   a.step++;
   if (a.step >= a.steps.length) { resolveNight(room); return; }
-  log(room, `进入 ${STEP_NAME[a.steps[a.step]]}。`);
+  log(room, `进入 ${STEP_NAME[room.mode][a.steps[a.step]]}。`);
   broadcast(room);
 }
 
 function resolveNight(room) {
+  if (room.mode === 'werewolf') return resolveNightWerewolf(room);
+  return resolveNightKillgame(room);
+}
+
+function resolveNightWerewolf(room) {
   const a = room.night;
   const deaths = [];
   if (a.wolfTarget != null) {
@@ -178,12 +291,50 @@ function resolveNight(room) {
     else if (healed) log(room, `女巫使用解药救活了 ${nameOf(room, a.wolfTarget)}。`);
   }
   if (a.witchPoison != null) deaths.push({ id: a.witchPoison, cause: 'poison' });
-  room.lastDeaths = deaths.map(d => ({ name: nameOf(room, d.id), role: ROLE_DEFS[room.players.find(p => p.id === d.id).role].name }));
+  room.lastDeaths = deaths.map(d => ({ name: nameOf(room, d.id), role: MODES.werewolf.roles[room.players.find(p => p.id === d.id).role].name }));
   deaths.forEach(d => kill(room, d.id, d.cause));
   room.guardLast = a.guardTarget;
   room.phase = 'day';
   log(room, '天亮了。');
   if (room.hunter && room.hunter.pending) { room.phase = 'hunter'; broadcast(room); return; }
+  broadcast(room);
+}
+
+function resolveNightKillgame(room) {
+  const a = room.night;
+  const RD = MODES.killgame.roles;
+  const deaths = new Map(); // id -> cause
+  if (a.killerTarget != null) deaths.set(a.killerTarget, 'night');
+  if (a.sniperTarget != null) deaths.set(a.sniperTarget, 'night');
+
+  const butterfly = room.players.find(p => p.role === 'butterfly' && p.alive);
+  const bt = a.butterflyTarget;
+
+  // 花蝴蝶护体：若花蝴蝶本人未死，则被保护者免疫今晚一切致死效果
+  if (butterfly && bt != null && !deaths.has(butterfly.id)) {
+    deaths.delete(bt);
+  }
+  // 医生：救活被刀/狙者；否则累计一次空针，两次空针扎死
+  if (a.doctorTarget != null) {
+    if (deaths.has(a.doctorTarget)) {
+      deaths.delete(a.doctorTarget);
+      room.emptyNeedles[a.doctorTarget] = 0;
+    } else {
+      room.emptyNeedles[a.doctorTarget] = (room.emptyNeedles[a.doctorTarget] || 0) + 1;
+      if (room.emptyNeedles[a.doctorTarget] >= 2) deaths.set(a.doctorTarget, 'poison');
+    }
+  }
+  // 花蝴蝶连带：若花蝴蝶今晚死亡，其保护的人也与她同死
+  if (butterfly && bt != null && deaths.has(butterfly.id)) {
+    deaths.set(bt, 'linked');
+  }
+  // 森林老人禁言（非致死）
+  if (a.oldmanTarget != null) room.silenced = a.oldmanTarget;
+
+  room.lastDeaths = Array.from(deaths.keys()).map(id => ({ name: nameOf(room, id), role: RD[room.players.find(p => p.id === id).role].name }));
+  deaths.forEach((cause, id) => kill(room, id, cause));
+  room.phase = 'day';
+  log(room, '天亮了。');
   broadcast(room);
 }
 
@@ -206,13 +357,13 @@ function finishVote(room) {
   else { eliminated = winners[0]; log(room, `投票结果：${nameOf(room, eliminated)} 以 ${max} 票被放逐。`); }
   if (eliminated != null) kill(room, eliminated, 'vote');
   room.votes = {};
-  if (room.hunter && room.hunter.pending) { room.phase = 'hunter'; broadcast(room); return; }
+  if (room.mode === 'werewolf' && room.hunter && room.hunter.pending) { room.phase = 'hunter'; broadcast(room); return; }
   afterVote(room);
 }
 
 function afterVote(room) {
   const w = checkWin(room);
-  if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '狼人阵营胜利！'); broadcast(room); return; }
+  if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : (room.mode === 'werewolf' ? '狼人阵营胜利！' : '杀手阵营胜利！')); broadcast(room); return; }
   room.day++;
   startNight(room, false);
 }
@@ -258,21 +409,24 @@ const server = http.createServer((req, res) => {
 function handleApi(url, data) {
   switch (url) {
     case '/api/create': {
+      const mode = MODES[data.mode] ? data.mode : 'werewolf';
+      const M = MODES[mode];
       const cfg = data.roles || {};
-      const total = ROLE_ORDER.reduce((s, r) => s + (cfg[r] || 0), 0);
-      if (total < 4) return { ok: false, error: '至少 4 人' };
-      if ((cfg.werewolf || 0) < 1) return { ok: false, error: '至少 1 名狼人' };
+      const total = M.roleOrder.reduce((s, r) => s + (cfg[r] || 0), 0);
+      if (total < M.minPlayers) return { ok: false, error: `至少 ${M.minPlayers} 人` };
+      const wolves = M.roleOrder.filter(r => M.roles[r].team === 'wolf').reduce((s, r) => s + (cfg[r] || 0), 0);
+      if (wolves < M.minWolves) return { ok: false, error: `至少 ${M.minWolves} 名杀手/狼人` };
       const code = genCode();
       const hostId = uid();
       const room = {
-        code, hostId, day: 0, phase: 'lobby',
+        code, mode, hostId, day: 0, phase: 'lobby',
         players: [{ id: hostId, name: (data.name || '法官').slice(0, 12), role: null, team: null, isWolf: false, alive: true, connected: true }],
-        roleConfig: cfg, night: null, witch: { heal: true, poison: true }, guardLast: null,
-        votes: {}, chat: [], log: [], result: null, hunter: null, lastDeaths: [],
-        clients: new Map(),
+        roleConfig: cfg, night: null, votes: {}, chat: [], log: [], result: null, lastDeaths: [], clients: new Map(),
+        emptyNeedles: {}, terroristBombUsed: false, silenced: null,
       };
+      if (mode === 'werewolf') { room.witch = { heal: true, poison: true }; room.guardLast = null; room.hunter = null; }
       rooms.set(code, room);
-      log(room, `房间 ${code} 已创建。`);
+      log(room, `房间 ${code} 已创建（${M.label}）。`);
       return { ok: true, code, playerId: hostId, isHost: true };
     }
     case '/api/join': {
@@ -307,45 +461,108 @@ function handleApi(url, data) {
         startVote(room);
         return { ok: true, _broadcast: true, _room: room };
       }
+      if (type === 'terrorist_bomb') {
+        if (room.mode !== 'killgame') return { ok: false, error: '无效操作' };
+        if (room.phase !== 'day' && room.phase !== 'vote') return { ok: false, error: '现在不能引爆' };
+        if (me.role !== 'terrorist') return { ok: false, error: '只有恐怖分子能引爆' };
+        if (room.terroristBombUsed) return { ok: false, error: '本局已引爆过' };
+        if (!me.alive) return { ok: false, error: '你已出局' };
+        const t = data.target; const tp = room.players.find(p => p.id === t);
+        if (!tp || !tp.alive || tp.id === me.id) return { ok: false, error: '无效目标' };
+        room.terroristBombUsed = true;
+        kill(room, me.id, 'bomb');
+        if (tp.team !== 'wolf') kill(room, tp.id, 'bomb');
+        log(room, `恐怖分子引爆，与 ${tp.name} 同归于尽。`);
+        const w = checkWin(room);
+        if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '杀手阵营胜利！'); }
+        return { ok: true, _broadcast: true, _room: room };
+      }
       if (room.phase === 'night') {
         const step = room.night.steps[room.night.step];
         const a = room.night;
-        if (step === 'wolf' && me.isWolf && type === 'wolf_kill') {
-          a.wolfVotes[pid] = data.target != null ? data.target : null;
-          if (Object.keys(a.wolfVotes).length >= aliveWolves(room).length) {
-            const vals = Object.values(a.wolfVotes).filter(v => v != null);
-            a.wolfTarget = vals.length ? vals[0] : null;
-            log(room, `狼人选择击杀 ${a.wolfTarget != null ? nameOf(room, a.wolfTarget) : '无人'}。`);
-            advanceNight(room);
+        if (room.mode === 'werewolf') {
+          if (step === 'wolf' && me.isWolf && type === 'wolf_kill') {
+            a.wolfVotes[pid] = data.target != null ? data.target : null;
+            if (Object.keys(a.wolfVotes).length >= aliveTeam(room, 'wolf').length) {
+              const vals = Object.values(a.wolfVotes).filter(v => v != null);
+              a.wolfTarget = vals.length ? vals[0] : null;
+              log(room, `狼人选择击杀 ${a.wolfTarget != null ? nameOf(room, a.wolfTarget) : '无人'}。`);
+              advanceNight(room);
+            }
+            return { ok: true, _broadcast: true, _room: room };
           }
-          return { ok: true, _broadcast: true, _room: room };
+          if (step === 'guard' && me.role === 'guard' && type === 'guard') {
+            a.guardTarget = data.target != null ? data.target : null;
+            advanceNight(room);
+            return { ok: true, _broadcast: true, _room: room };
+          }
+          if (step === 'seer' && me.role === 'seer' && type === 'seer') {
+            if (a.seerDone) return { ok: false, error: '今晚已查验' };
+            const t = data.target;
+            a.seerTarget = t; a.seerDone = true;
+            const tp = room.players.find(p => p.id === t);
+            a.seerResult = tp.isWolf ? 'wolf' : 'good';
+            log(room, `预言家查验了 ${nameOf(room, t)}。`);
+            advanceNight(room);
+            return { ok: true, _broadcast: true, _room: room };
+          }
+          if (step === 'witch' && me.role === 'witch' && type === 'witch') {
+            if (a.witchDone) return { ok: false, error: '已行动' };
+            const heal = !!data.heal, poison = data.poison != null ? data.poison : null;
+            if (heal && a.wolfTarget != null && room.witch.heal) { a.witchHeal = true; room.witch.heal = false; }
+            if (poison != null && room.witch.poison && !heal) { a.witchPoison = poison; room.witch.poison = false; }
+            a.witchDone = true;
+            log(room, '女巫行动结束。');
+            advanceNight(room);
+            return { ok: true, _broadcast: true, _room: room };
+          }
+          return { ok: false, error: '当前不是你的行动阶段' };
+        } else {
+          if (step === 'butterfly' && me.role === 'butterfly' && type === 'butterfly') {
+            a.butterflyTarget = data.target != null ? data.target : null;
+            advanceNight(room);
+            return { ok: true, _broadcast: true, _room: room };
+          }
+          if (step === 'sniper' && me.role === 'sniper' && type === 'sniper') {
+            a.sniperTarget = data.target != null ? data.target : null;
+            advanceNight(room);
+            return { ok: true, _broadcast: true, _room: room };
+          }
+          if (step === 'killer' && me.role === 'killer' && type === 'killer') {
+            if (a.killerTarget != null) return { ok: false, error: '杀手已选定目标' };
+            a.killerTarget = data.target != null ? data.target : null;
+            log(room, `杀手选择击杀 ${a.killerTarget != null ? nameOf(room, a.killerTarget) : '无人'}。`);
+            advanceNight(room);
+            return { ok: true, _broadcast: true, _room: room };
+          }
+          if (step === 'doctor' && me.role === 'doctor' && type === 'doctor') {
+            if (a.doctorDone) return { ok: false, error: '已行动' };
+            a.doctorTarget = data.target != null ? data.target : null; a.doctorDone = true;
+            log(room, '医生行动结束。');
+            advanceNight(room);
+            return { ok: true, _broadcast: true, _room: room };
+          }
+          if (step === 'police' && me.role === 'police' && type === 'police') {
+            if (a.policeDone) return { ok: false, error: '已查验' };
+            const t = data.target;
+            if (t == null) return { ok: false, error: '请选择查验目标' };
+            const tp = room.players.find(p => p.id === t);
+            if (!tp) return { ok: false, error: '无效目标' };
+            a.policeTarget = t; a.policeDone = true;
+            a.policeResult = tp.team === 'wolf' ? 'wolf' : 'good';
+            log(room, `警察查验了 ${nameOf(room, t)}。`);
+            advanceNight(room);
+            return { ok: true, _broadcast: true, _room: room };
+          }
+          if (step === 'oldman' && me.role === 'oldman' && type === 'oldman') {
+            if (a.oldmanDone) return { ok: false, error: '已行动' };
+            a.oldmanTarget = data.target != null ? data.target : null; a.oldmanDone = true;
+            log(room, '森林老人行动结束。');
+            advanceNight(room);
+            return { ok: true, _broadcast: true, _room: room };
+          }
+          return { ok: false, error: '当前不是你的行动阶段' };
         }
-        if (step === 'guard' && me.role === 'guard' && type === 'guard') {
-          a.guardTarget = data.target != null ? data.target : null;
-          advanceNight(room);
-          return { ok: true, _broadcast: true, _room: room };
-        }
-        if (step === 'seer' && me.role === 'seer' && type === 'seer') {
-          if (a.seerDone) return { ok: false, error: '今晚已查验' };
-          const t = data.target;
-          a.seerTarget = t; a.seerDone = true;
-          const tp = room.players.find(p => p.id === t);
-          a.seerResult = tp.isWolf ? 'wolf' : 'good';
-          log(room, `预言家查验了 ${nameOf(room, t)}。`);
-          advanceNight(room);
-          return { ok: true, _broadcast: true, _room: room };
-        }
-        if (step === 'witch' && me.role === 'witch' && type === 'witch') {
-          if (a.witchDone) return { ok: false, error: '已行动' };
-          const heal = !!data.heal, poison = data.poison != null ? data.poison : null;
-          if (heal && a.wolfTarget != null && room.witch.heal) { a.witchHeal = true; room.witch.heal = false; }
-          if (poison != null && room.witch.poison && !heal) { a.witchPoison = poison; room.witch.poison = false; }
-          a.witchDone = true;
-          log(room, '女巫行动结束。');
-          advanceNight(room);
-          return { ok: true, _broadcast: true, _room: room };
-        }
-        return { ok: false, error: '当前不是你的行动阶段' };
       }
       if (room.phase === 'vote' && type === 'vote') {
         if (!me.alive) return { ok: false, error: '你已出局' };
@@ -360,7 +577,7 @@ function handleApi(url, data) {
         else broadcast(room);
         return { ok: true, _broadcast: room.phase === 'vote' ? false : true, _room: room };
       }
-      if (room.phase === 'hunter' && room.hunter && room.hunter.pending && me.id === room.hunter.deadId && type === 'hunter_shoot') {
+      if (room.phase === 'hunter' && room.mode === 'werewolf' && room.hunter && room.hunter.pending && me.id === room.hunter.deadId && type === 'hunter_shoot') {
         const t = data.target != null ? data.target : null;
         if (t != null) { const tp = room.players.find(p => p.id === t); if (!tp || !tp.alive) return { ok: false, error: '无效目标' }; kill(room, t, 'hunter'); }
         room.hunter = null;
@@ -376,5 +593,5 @@ function handleApi(url, data) {
 }
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`聚会狼人杀(联网版) 已启动: http://localhost:${PORT}  (bind 0.0.0.0, PORT=${PORT})`);
+  console.log(`聚会桌游(联网版) 已启动: http://localhost:${PORT}  (bind 0.0.0.0, PORT=${PORT})`);
 });
