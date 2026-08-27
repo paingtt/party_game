@@ -331,6 +331,7 @@ function escapeHtml(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&l
 
 function renderLobby(){
   const ps=S.players.map(p=>`<span class="pc">${escapeHtml(p.name)}</span>`).join('');
+  const isHost=S.you.id===S.hostId;
   return `<div class="card">
     <div class="title-c"><div class="big">🛋️</div><div>等待玩家加入</div></div>
     <div class="codebig">${S.code}</div>
@@ -340,11 +341,25 @@ function renderLobby(){
     <p class="center muted" style="margin-top:8px">已加入 ${S.players.length} 人</p>
   </div>
   <div class="foot" style="margin-top:12px">
-    ${S.you.id===S.hostId?`<button class="btn" onclick="startGame()">开始游戏（${S.players.length}人）</button>`:`<p class="center muted">等待法官开始游戏…</p>`}
+    ${isHost?`<button class="btn" onclick="startGame()">开始游戏（${S.players.length}人）</button>`:`<p class="center muted">等待法官开始游戏…</p>`}
+    <button class="btn ghost" style="margin-top:8px" onclick="leaveRoom()">${isHost?'退出并销毁房间':'离开房间'}</button>
   </div>`;
 }
 async function startGame(){const rr=await post('/api/start',{code:me.code,playerId:me.playerId});if(!rr.ok)toast(rr.error||'开始失败');}
 function copyCode(){ if(!S||!S.code)return; try{navigator.clipboard.writeText(S.code);toast('已复制房间号 '+S.code);}catch(e){toast('房间号：'+S.code);} }
+async function leaveRoom(){
+  if(!me)return;
+  const isHost=S&&S.you&&S.you.id===S.hostId;
+  if(isHost && !confirm('确定要退出并销毁这个房间吗？所有人都将失去连接。'))return;
+  try{ await post('/api/leave',{code:me.code,playerId:me.playerId}); }catch(_){}
+  // 断开 SSE，浏览器不会再触发 enterGame/connectSSE
+  if(window._es){ try{window._es.close();}catch(_){ } window._es=null; }
+  S=null; me=null; selTarget=null; selVote=null; selVoteDone=false; wHeal=false; wPoison=null; lastCtx='';
+  document.getElementById('game').classList.remove('active');
+  document.getElementById('home').classList.add('active');
+  document.getElementById('logBtn').style.display='none';
+  toast(isHost?'房间已关闭':'已离开房间');
+}
 
 // ---------- night: werewolf ----------
 function renderNightWolf(){

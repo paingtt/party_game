@@ -504,6 +504,19 @@ function handleApi(url, data) {
       if (!startGame(room)) return { ok: false, error: '人数与角色配置不符' };
       return { ok: true, _broadcast: true, _room: room };
     }
+    case '/api/leave': {
+      const room = rooms.get(data.code);
+      if (!room) return { ok: true }; // 房间已不在也视为成功
+      // 只有 host 在 lobby 阶段可以"销毁房间"返回主界面；其他情况仅将自己标记离线
+      const pid = data.playerId;
+      if (room.hostId === pid && room.phase === 'lobby') {
+        rooms.delete(data.code);
+        return { ok: true, destroyed: true };
+      }
+      const me = room.players.find(p => p.id === pid);
+      if (me) me.connected = false;
+      return { ok: true };
+    }
     case '/api/action': {
       const room = rooms.get(data.code);
       if (!room) return { ok: false, error: '房间不存在' };
