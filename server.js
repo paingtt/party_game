@@ -56,11 +56,10 @@ const MODES = {
 const rooms = new Map(); // code -> room
 
 function genCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let c;
   do {
     c = '';
-    for (let i = 0; i < 4; i++) c += chars[Math.floor(Math.random() * chars.length)];
+    for (let i = 0; i < 4; i++) c += Math.floor(Math.random() * 10); // 4 位纯数字 0000-9999
   } while (rooms.has(c));
   return c;
 }

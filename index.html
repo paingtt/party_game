@@ -128,7 +128,7 @@
     <div class="card" style="margin-top:12px;">
       <div class="label">加入已有房间</div>
       <div class="row">
-        <input id="joinCode" placeholder="房间号" maxlength="4" style="text-transform:uppercase">
+        <input id="joinCode" placeholder="房间号" maxlength="4" inputmode="numeric" style="text-transform:none">
         <button class="btn sm" onclick="joinRoom()">加入</button>
       </div>
     </div>
@@ -250,16 +250,26 @@ async function createRoom(){
   const r=await post('/api/create',{name,roles,mode:currentMode});
   if(!r.ok){toast(r.error||'创建失败');return;}
   me={code:r.code,playerId:r.playerId,isHost:true,name};
+  seedView(name,r.code,r.playerId); // 立即渲染房间号，不等 SSE
   enterGame();
 }
 async function joinRoom(){
   const name=(document.getElementById('homeName').value||'玩家').trim();
-  const code=(document.getElementById('joinCode').value||'').trim().toUpperCase();
+  const code=(document.getElementById('joinCode').value||'').replace(/\D/g,'').trim();
   if(!code){toast('请输入房间号');return;}
   const r=await post('/api/join',{code,name});
   if(!r.ok){toast(r.error||'加入失败');return;}
   me={code:r.code,playerId:r.playerId,isHost:false,name:name};
+  seedView(name,r.code,r.playerId);
   enterGame();
+}
+// 创建/加入成功后立即构造一份最小视图，先渲染出房间号，SSE 到达后再被完整覆盖
+function seedView(name,code,pid){
+  S={mode:currentMode,code,phase:'lobby',day:0,hostId:pid,
+     you:{id:pid,name,role:null,team:null,alive:true,isWolf:false},
+     players:[{id:pid,name,alive:true,role:null,isWolf:false}],
+     myAction:null,night:null,lastDeaths:[],votesCount:0,aliveCount:1,
+     silencedName:null,silencedId:null,terroristBombUsed:false,chat:[],log:[],result:null};
 }
 function enterGame(){
   document.getElementById('home').classList.remove('active');
@@ -274,7 +284,7 @@ function connectSSE(){
   es.onerror=()=>{ /* 自动重连由浏览器处理 */ };
   window._es=es;
 }
-async function post(url,data){try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});return await r.json();}catch(e){toast('网络错误');return {ok:false};}}
+async function post(url,data){try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const t=await r.text();try{return JSON.parse(t);}catch(e){return {ok:false,error:'服务器正在唤醒，请稍候再试'};}}catch(e){toast('网络错误');return {ok:false};}}
 async function act(type,extra){const d=Object.assign({code:me.code,playerId:me.playerId,type},extra||{});const r=await post('/api/action',d);if(r&&r.error)toast(r.error);return r;}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1700);}
 
@@ -324,6 +334,7 @@ function renderLobby(){
   return `<div class="card">
     <div class="title-c"><div class="big">🛋️</div><div>等待玩家加入</div></div>
     <div class="codebig">${S.code}</div>
+    <div class="center" style="margin:4px 0 2px"><button class="btn ghost sm" onclick="copyCode()">复制房间号</button></div>
     <p class="center muted">把房间号告诉朋友，让他们加入</p>
     <div class="players-c">${ps}</div>
     <p class="center muted" style="margin-top:8px">已加入 ${S.players.length} 人</p>
@@ -333,6 +344,7 @@ function renderLobby(){
   </div>`;
 }
 async function startGame(){const rr=await post('/api/start',{code:me.code,playerId:me.playerId});if(!rr.ok)toast(rr.error||'开始失败');}
+function copyCode(){ if(!S||!S.code)return; try{navigator.clipboard.writeText(S.code);toast('已复制房间号 '+S.code);}catch(e){toast('房间号：'+S.code);} }
 
 // ---------- night: werewolf ----------
 function renderNightWolf(){
