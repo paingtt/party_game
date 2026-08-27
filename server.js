@@ -264,6 +264,7 @@ function startNight(room, first) {
   room.silenced = null;
   resetNight(room);
   log(room, `第 ${room.day} 夜降临。`);
+  skipUnrunnable(room);
   broadcast(room);
 }
 
@@ -271,8 +272,46 @@ function advanceNight(room) {
   const a = room.night;
   a.step++;
   if (a.step >= a.steps.length) { resolveNight(room); return; }
-  log(room, `进入 ${STEP_NAME[room.mode][a.steps[a.step]]}。`);
+  skipUnrunnable(room);
   broadcast(room);
+}
+
+// 当前夜晚步骤是否有「在线且存活」的角色可以操作
+function stepActorConnected(room) {
+  const a = room.night;
+  if (!a || a.step >= a.steps.length) return false;
+  const step = a.steps[a.step];
+  const any = (role) => room.players.some(p => p.role === role && p.alive && p.connected);
+  if (room.mode === 'werewolf') {
+    if (step === 'wolf') return aliveTeam(room, 'wolf').some(p => p.connected);
+    if (step === 'guard') return any('guard');
+    if (step === 'seer') return any('seer');
+    if (step === 'witch') return any('witch');
+  } else {
+    if (step === 'butterfly') return any('butterfly');
+    if (step === 'sniper') return any('sniper');
+    if (step === 'killer') return any('killer');
+    if (step === 'doctor') return any('doctor');
+    if (step === 'police') return any('police');
+    if (step === 'oldman') return any('oldman');
+  }
+  return false;
+}
+
+// 若当前步骤负责角色全部掉线/离线，则自动跳过该步骤，避免游戏卡死
+function skipUnrunnable(room) {
+  const a = room.night;
+  let guard = 0;
+  while (room.phase === 'night' && a.step < a.steps.length && !stepActorConnected(room)) {
+    if (guard++ > 30) break;
+    const skipped = STEP_NAME[room.mode][a.steps[a.step]];
+    a.step++;
+    if (a.step >= a.steps.length) { resolveNight(room); return; }
+    log(room, `跳过 ${skipped}（该角色无人操作）`);
+  }
+  if (room.phase === 'night' && a.step < a.steps.length) {
+    log(room, `进入 ${STEP_NAME[room.mode][a.steps[a.step]]}。`);
+  }
 }
 
 function resolveNight(room) {
@@ -297,6 +336,8 @@ function resolveNightWerewolf(room) {
   room.phase = 'day';
   log(room, '天亮了。');
   if (room.hunter && room.hunter.pending) { room.phase = 'hunter'; broadcast(room); return; }
+  const w = checkWin(room);
+  if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '狼人阵营胜利！'); broadcast(room); return; }
   broadcast(room);
 }
 
@@ -335,6 +376,8 @@ function resolveNightKillgame(room) {
   deaths.forEach((cause, id) => kill(room, id, cause));
   room.phase = 'day';
   log(room, '天亮了。');
+  const w = checkWin(room);
+  if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '杀手阵营胜利！'); }
   broadcast(room);
 }
 
@@ -361,6 +404,14 @@ function finishVote(room) {
   afterVote(room);
 }
 
+function maybeFinishVote(room) {
+  const alive = alivePlayers(room);
+  const connectedAlive = alive.filter(p => p.connected);
+  const allConnectedVoted = connectedAlive.length > 0 && connectedAlive.every(p => room.votes[p.id] !== undefined);
+  if (connectedAlive.length === 0 || allConnectedVoted) finishVote(room);
+  else broadcast(room);
+}
+
 function afterVote(room) {
   const w = checkWin(room);
   if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : (room.mode === 'werewolf' ? '狼人阵营胜利！' : '杀手阵营胜利！')); broadcast(room); return; }
@@ -380,8 +431,18 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
     res.write(`data: ${JSON.stringify(view(room, pid))}\n\n`);
     room.clients.set(pid, res);
+    const _sp = room.players.find(x => x.id === pid);
+    if (_sp) _sp.connected = true;
     const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 25000);
-    req.on('close', () => { clearInterval(ping); if (room.clients.get(pid) === res) room.clients.delete(pid); const p = room.players.find(x => x.id === pid); if (p) p.connected = false; });
+    req.on('close', () => {
+      clearInterval(ping);
+      if (room.clients.get(pid) === res) room.clients.delete(pid);
+      const p = room.players.find(x => x.id === pid);
+      if (p) p.connected = false;
+      // 断线兜底：夜晚当前步骤角色全部离线 → 自动跳过；投票阶段若只剩离线者未投 → 自动结算
+      if (room.phase === 'night' && !stepActorConnected(room)) { skipUnrunnable(room); broadcast(room); }
+      else if (room.phase === 'vote') { maybeFinishVote(room); }
+    });
     return;
   }
   // static index
@@ -461,6 +522,21 @@ function handleApi(url, data) {
         startVote(room);
         return { ok: true, _broadcast: true, _room: room };
       }
+      if (type === 'host_skip') {
+        if (pid !== room.hostId) return { ok: false, error: '只有法官能跳过' };
+        if (room.phase !== 'night') return { ok: false, error: '现在无法跳过' };
+        const cur = STEP_NAME[room.mode][room.night.steps[room.night.step]] || '当前步骤';
+        log(room, `法官跳过了 ${cur}。`);
+        advanceNight(room);
+        return { ok: true, _broadcast: true, _room: room };
+      }
+      if (type === 'host_force_vote') {
+        if (pid !== room.hostId) return { ok: false, error: '只有法官能结算' };
+        if (room.phase !== 'vote') return { ok: false, error: '现在无法结算' };
+        log(room, '法官强制结束投票并结算。');
+        finishVote(room);
+        return { ok: true, _broadcast: true, _room: room };
+      }
       if (type === 'terrorist_bomb') {
         if (room.mode !== 'killgame') return { ok: false, error: '无效操作' };
         if (room.phase !== 'day' && room.phase !== 'vote') return { ok: false, error: '现在不能引爆' };
@@ -483,7 +559,8 @@ function handleApi(url, data) {
         if (room.mode === 'werewolf') {
           if (step === 'wolf' && me.isWolf && type === 'wolf_kill') {
             a.wolfVotes[pid] = data.target != null ? data.target : null;
-            if (Object.keys(a.wolfVotes).length >= aliveTeam(room, 'wolf').length) {
+            const connWolves = aliveTeam(room, 'wolf').filter(p => p.connected).length;
+            if (connWolves > 0 && Object.keys(a.wolfVotes).length >= connWolves) {
               const vals = Object.values(a.wolfVotes).filter(v => v != null);
               a.wolfTarget = vals.length ? vals[0] : null;
               log(room, `狼人选择击杀 ${a.wolfTarget != null ? nameOf(room, a.wolfTarget) : '无人'}。`);
@@ -573,8 +650,7 @@ function handleApi(url, data) {
           if (!tp || !tp.alive || tp.id === me.id) return { ok: false, error: '无效投票' };
           room.votes[pid] = t;
         }
-        if (Object.keys(room.votes).length >= alivePlayers(room).length) finishVote(room);
-        else broadcast(room);
+        maybeFinishVote(room);
         return { ok: true, _broadcast: room.phase === 'vote' ? false : true, _room: room };
       }
       if (room.phase === 'hunter' && room.mode === 'werewolf' && room.hunter && room.hunter.pending && me.id === room.hunter.deadId && type === 'hunter_shoot') {

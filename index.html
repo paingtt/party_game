@@ -381,7 +381,7 @@ function renderNightWolf(){
   }else{
     body=`<div class="prompt center">第 ${S.day} 夜 · <b>${n?n.stepName:''}</b><br>等待其他角色行动，请稍候…<br><br>（你是 ${ROLE_DEFS[S.you.role].name}，当前无需操作）</div>`;
   }
-  return `<div class="title-c"><span class="big">🌙</span><div>第 ${S.day} 夜</div><span class="badge nighttag">法官主持中</span></div>${body}`;
+  return `<div class="title-c"><span class="big">🌙</span><div>第 ${S.day} 夜</div><span class="badge nighttag">法官主持中</span></div>${body}${hostNightSkipBtn()}`;
 }
 function submitWolf(){act('wolf_kill',{target:selTarget});selTarget=null;}
 function submitGuard(){act('guard',{target:selTarget});selTarget=null;}
@@ -421,7 +421,7 @@ function renderNightKill(){
   }else{
     body=`<div class="prompt center">第 ${S.day} 夜 · <b>${n?n.stepName:''}</b><br>等待其他角色行动，请稍候…<br><br>（你是 ${ROLE_DEFS[S.you.role].name}，当前无需操作）</div>`;
   }
-  return `<div class="title-c"><span class="big">🌙</span><div>第 ${S.day} 夜</div><span class="badge nighttag">法官主持中</span></div>${body}`;
+  return `<div class="title-c"><span class="big">🌙</span><div>第 ${S.day} 夜</div><span class="badge nighttag">法官主持中</span></div>${body}${hostNightSkipBtn()}`;
 }
 function submitButterfly(){act('butterfly',{target:selTarget});selTarget=null;}
 function submitSniper(){act('sniper',{target:selTarget});selTarget=null;}
@@ -448,6 +448,18 @@ function renderDay(){
 }
 async function startVote(){const r=await act('start_vote');}
 
+// ---------- 法官：断线/挂机兜底控制 ----------
+function hostNightSkipBtn(){
+  if(S.you.id!==S.hostId) return '';
+  return `<button class="btn ghost" style="margin-top:10px" onclick="hostSkip()">⏭️ 法官：跳过当前步骤</button>`;
+}
+function hostSkip(){act('host_skip');}
+function hostForceVoteBtn(){
+  if(S.you.id!==S.hostId) return '';
+  return `<button class="btn ghost" style="margin-top:10px" onclick="hostForceVote()">⏭️ 法官：结束投票并结算</button>`;
+}
+function hostForceVote(){act('host_force_vote');}
+
 // ---------- vote ----------
 function renderVote(){
   const alive=aliveList();
@@ -472,7 +484,7 @@ function renderVote(){
   if(S.mode==='killgame' && S.you.role==='terrorist' && !S.terroristBombUsed && S.you.alive){
     bomb=`<button class="btn ghost" style="margin-top:10px" onclick="openBomb()">💣 引爆（与一人同归于尽）</button>`;
   }
-  return `<div class="title-c"><span class="big">🗳️</span><div>第 ${S.day} 天 · 投票</div></div>${body}${bomb}`;
+  return `<div class="title-c"><span class="big">🗳️</span><div>第 ${S.day} 天 · 投票</div></div>${body}${bomb}${hostForceVoteBtn()}`;
 }
 function doVote(){ if(selVote===undefined)return; selVoteDone=true; act('vote',{target:selVote}); }
 
