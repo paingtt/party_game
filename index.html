@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>聚会狼人杀 · 联网版</title>
+<style>
+  :root{
+    --bg:#0f1226; --bg2:#171a36; --card:#1e2244; --card2:#262b55;
+    --line:#333a6b; --txt:#eef0ff; --sub:#9aa0d0; --acc:#7c8cff; --acc2:#a06bff;
+    --wolf:#ff6b6b; --good:#4dd4ac; --warn:#ffd166;
+    --r:16px; --shadow:0 8px 24px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:linear-gradient(160deg,var(--bg),var(--bg2));color:var(--txt);min-height:100vh;-webkit-font-smoothing:antialiased;}
+  #app{max-width:480px;margin:0 auto;padding:14px 14px calc(10px + env(safe-area-inset-bottom));min-height:100vh;display:flex;flex-direction:column;}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;}
+  .logo{font-size:17px;font-weight:800;display:flex;gap:6px;align-items:center;}
+  .topbtn{background:var(--card);border:1px solid var(--line);color:var(--sub);padding:6px 10px;border-radius:10px;font-size:12px;}
+  .screen{display:none;flex:1;flex-direction:column;}
+  .screen.active{display:flex;}
+  h1{font-size:23px;margin:4px 0;}
+  .sub{color:var(--sub);font-size:13px;line-height:1.5;margin-bottom:12px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px;box-shadow:var(--shadow);}
+  .field{margin-bottom:12px;}
+  .label{font-size:12px;color:var(--sub);margin-bottom:6px;display:flex;justify-content:space-between;}
+  input,textarea{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:12px;color:var(--txt);padding:11px;font-size:15px;font-family:inherit;}
+  .presets{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
+  .chip{background:var(--card2);border:1px solid var(--line);color:var(--txt);padding:7px 10px;border-radius:10px;font-size:12px;}
+  .chip.on{background:linear-gradient(135deg,var(--acc),var(--acc2));border-color:transparent;font-weight:700;}
+  .stepper{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);}
+  .stepper:last-child{border-bottom:none;}
+  .stepper .rname{display:flex;align-items:center;gap:7px;font-size:14px;}
+  .stepper .remoji{font-size:17px;}
+  .step-ctrl{display:flex;align-items:center;gap:10px;}
+  .step-ctrl button{width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--card2);color:var(--txt);font-size:17px;font-weight:700;}
+  .step-ctrl .num{min-width:20px;text-align:center;font-weight:700;}
+  .total{display:flex;justify-content:space-between;align-items:center;margin:10px 0;font-size:14px;}
+  .total b{font-size:18px;color:var(--acc);}
+  .btn{display:block;width:100%;padding:14px;border-radius:13px;border:none;font-size:15px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--acc),var(--acc2));box-shadow:var(--shadow);cursor:pointer;}
+  .btn:active{transform:scale(.98);}
+  .btn.ghost{background:var(--card2);border:1px solid var(--line);color:var(--txt);}
+  .btn.sm{width:auto;padding:10px 16px;font-size:14px;}
+  .btn[disabled]{opacity:.45;pointer-events:none;}
+  .row{display:flex;gap:8px;}
+  .row .btn{flex:1;}
+  .pgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:6px;}
+  .pbtn{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;position:relative;transition:.12s;}
+  .pbtn:active{transform:scale(.97);}
+  .pbtn.sel{background:linear-gradient(135deg,var(--acc),var(--acc2));border-color:transparent;}
+  .pbtn.dead{opacity:.4;}
+  .pbtn .pid{font-size:11px;color:var(--sub);}
+  .pbtn .pname{font-size:14px;font-weight:700;margin-top:2px;}
+  .pbtn .pemoji{font-size:20px;margin-bottom:3px;}
+  .pbtn .tag{position:absolute;top:4px;right:6px;font-size:10px;color:var(--warn);}
+  .me{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:10px;}
+  .me .av{font-size:26px;}
+  .me .mt{font-size:12px;color:var(--sub);}
+  .me .mn{font-size:16px;font-weight:800;}
+  .me .badge{margin-left:auto;font-size:11px;padding:3px 9px;border-radius:20px;}
+  .b-wolf{background:rgba(255,107,107,.18);color:var(--wolf);border:1px solid var(--wolf);}
+  .b-good{background:rgba(77,212,172,.16);color:var(--good);border:1px solid var(--good);}
+  .prompt{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:13px;line-height:1.6;color:var(--sub);margin-bottom:10px;}
+  .prompt b{color:var(--txt);}
+  .title-c{text-align:center;margin:6px 0 10px;}
+  .title-c .big{font-size:30px;}
+  .nighttag{background:rgba(124,140,255,.15);color:var(--acc);border:1px solid var(--acc);}
+  .daytag{background:rgba(255,209,102,.15);color:var(--warn);border:1px solid var(--warn);}
+  .center{text-align:center;}
+  .muted{color:var(--sub);font-size:13px;}
+  .logwrap{margin-top:10px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px;max-height:120px;overflow:auto;font-size:12px;color:var(--sub);line-height:1.6;}
+  .rolesum{display:flex;flex-direction:column;gap:6px;margin-top:10px;}
+  .rolesum .ri{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;}
+  .rolesum .ri .re{font-size:16px;}
+  /* chat */
+  #chatPanel{margin-top:auto;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;display:none;flex-direction:column;gap:6px;}
+  #chatLog{max-height:120px;overflow:auto;font-size:13px;line-height:1.5;}
+  #chatLog .cm{margin-bottom:3px;}
+  #chatLog .cn{color:var(--acc);font-weight:700;}
+  #chatInput{display:flex;gap:6px;}
+  #chatInput input{border-radius:20px;padding:9px 12px;}
+  .toast{position:fixed;left:50%;bottom:70px;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:11px 16px;border-radius:11px;font-size:13px;z-index:60;opacity:0;transition:.3s;pointer-events:none;max-width:90%;text-align:center;}
+  .toast.show{opacity:1;}
+  .modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;padding:20px;z-index:50;}
+  .modal-mask.show{display:flex;}
+  .modal{background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:20px;max-width:360px;width:100%;box-shadow:var(--shadow);text-align:center;max-height:80vh;overflow:auto;}
+  .modal .mt{font-size:17px;font-weight:800;margin-bottom:8px;}
+  .modal .md{font-size:13px;color:var(--sub);line-height:1.6;margin-bottom:14px;text-align:left;}
+  .codebig{font-size:34px;font-weight:900;letter-spacing:4px;color:var(--acc);text-align:center;margin:6px 0;}
+  .players-c{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+  .pc{background:var(--card2);border:1px solid var(--line);border-radius:20px;padding:5px 11px;font-size:13px;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="logo"><span>🌙</span> 聚会狼人杀</div>
+    <button class="topbtn" id="logBtn" onclick="openLog()" style="display:none">📜 日志</button>
+  </header>
+
+  <!-- HOME -->
+  <section id="home" class="screen active">
+    <h1>联网狼人杀</h1>
+    <p class="sub">一人建房，其他人用自己手机输入房间号加入。每人只在自己手机上看身份、行动与发言。</p>
+    <div class="card">
+      <div class="field">
+        <div class="label">你的昵称</div>
+        <input id="homeName" placeholder="例如：小明" maxlength="12">
+      </div>
+      <div class="field">
+        <div class="label">快速预设</div>
+        <div class="presets" id="presets"></div>
+      </div>
+      <div class="field">
+        <div class="label"><span>角色配置</span><span id="presetHint"></span></div>
+        <div id="steppers"></div>
+      </div>
+      <div class="total"><span>总人数</span><b id="totalCount">6</b></div>
+      <button class="btn" onclick="createRoom()">创建房间 →</button>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="label">加入已有房间</div>
+      <div class="row">
+        <input id="joinCode" placeholder="房间号" maxlength="4" style="text-transform:uppercase">
+        <button class="btn sm" onclick="joinRoom()">加入</button>
+      </div>
+    </div>
+    <p class="sub center" style="margin-top:12px">Demo 版 · 一名玩家兼任"法官"负责开始投票与主持</p>
+  </section>
+
+  <!-- GAME -->
+  <section id="game" class="screen">
+    <div class="me" id="meBar"></div>
+    <div id="stage"></div>
+    <div id="chatPanel">
+      <div id="chatLog"></div>
+      <div id="chatInput">
+        <input id="chatText" placeholder="发言…" maxlength="200" onkeydown="if(event.key==='Enter')sendChat()">
+        <button class="btn sm" onclick="sendChat()">发送</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="modal-mask" id="logModal">
+  <div class="modal">
+    <div class="mt" style="text-align:center">游戏日志</div>
+    <div class="logwrap" id="logContent" style="max-height:50vh"></div>
+    <button class="btn" style="margin-top:12px" onclick="document.getElementById('logModal').classList.remove('show')">关闭</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const ROLE_DEFS = {
+  werewolf:{name:'狼人',emoji:'🐺',team:'wolf'},
+  seer:{name:'预言家',emoji:'🔮',team:'good'},
+  witch:{name:'女巫',emoji:'🧪',team:'good'},
+  hunter:{name:'猎人',emoji:'🏹',team:'good'},
+  guard:{name:'守卫',emoji:'🛡️',team:'good'},
+  villager:{name:'平民',emoji:'👨',team:'good'},
+};
+const ROLE_ORDER = ['werewolf','seer','witch','hunter','guard','villager'];
+const PRESETS = {
+  '6人':{werewolf:2,seer:1,witch:1,hunter:0,guard:0,villager:2},
+  '8人':{werewolf:2,seer:1,witch:1,hunter:1,guard:0,villager:3},
+  '9人':{werewolf:3,seer:1,witch:1,hunter:1,guard:0,villager:3},
+  '10人':{werewolf:3,seer:1,witch:1,hunter:1,guard:1,villager:3},
+};
+let currentPreset='6人';
+let me=null; // {code,playerId,isHost,name}
+let S=null; // latest view
+let selTarget=null, selVote=null, selVoteDone=false, wHeal=false, wPoison=null, lastCtx='';
+
+// ---------- setup UI ----------
+function buildHome(){
+  const pc=document.getElementById('presets'); pc.innerHTML='';
+  Object.keys(PRESETS).forEach(k=>{
+    const b=document.createElement('div'); b.className='chip'+(k===currentPreset?' on':''); b.textContent=k;
+    b.onclick=()=>{currentPreset=k;applyPreset(k);}; pc.appendChild(b);
+  });
+  const sc=document.getElementById('steppers'); sc.innerHTML='';
+  ROLE_ORDER.forEach(r=>{
+    const d=ROLE_DEFS[r];
+    const row=document.createElement('div'); row.className='stepper';
+    row.innerHTML=`<div class="rname"><span class="remoji">${d.emoji}</span><span>${d.name}</span></div>
+      <div class="step-ctrl"><button onclick="step('${r}',-1)">−</button><span class="num" id="num_${r}">0</span><button onclick="step('${r}',1)">+</button></div>`;
+    sc.appendChild(row);
+  });
+  applyPreset(currentPreset);
+}
+function applyPreset(k){const p=PRESETS[k];ROLE_ORDER.forEach(r=>document.getElementById('num_'+r).textContent=p[r]||0);currentPreset=k;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.toggle('on',c.textContent===k));updateTotal();}
+function step(r,d){const el=document.getElementById('num_'+r);let v=parseInt(el.textContent)+d;if(v<0)v=0;if(v>20)v=20;el.textContent=v;currentPreset=null;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.remove('on'));document.getElementById('presetHint').textContent='自定义';updateTotal();}
+function updateTotal(){let t=0;ROLE_ORDER.forEach(r=>t+=parseInt(document.getElementById('num_'+r).textContent));document.getElementById('totalCount').textContent=t;}
+function getRoles(){const o={};ROLE_ORDER.forEach(r=>o[r]=parseInt(document.getElementById('num_'+r).textContent));return o;}
+
+async function createRoom(){
+  const name=(document.getElementById('homeName').value||'法官').trim();
+  const roles=getRoles();let total=0;ROLE_ORDER.forEach(r=>total+=roles[r]);
+  if(total<4){toast('至少需要 4 人');return;}
+  if(roles.werewolf<1){toast('至少 1 名狼人');return;}
+  const r=await post('/api/create',{name,roles});
+  if(!r.ok){toast(r.error||'创建失败');return;}
+  me={code:r.code,playerId:r.playerId,isHost:true,name};
+  enterGame();
+}
+async function joinRoom(){
+  const name=(document.getElementById('homeName').value||'玩家').trim();
+  const code=(document.getElementById('joinCode').value||'').trim().toUpperCase();
+  if(!code){toast('请输入房间号');return;}
+  const r=await post('/api/join',{code,name});
+  if(!r.ok){toast(r.error||'加入失败');return;}
+  me={code:r.code,playerId:r.playerId,isHost:false,name:name};
+  enterGame();
+}
+function enterGame(){
+  document.getElementById('home').classList.remove('active');
+  document.getElementById('game').classList.add('active');
+  document.getElementById('logBtn').style.display='';
+  connectSSE();
+  render();
+}
+function connectSSE(){
+  const es=new EventSource(`/api/events?code=${encodeURIComponent(me.code)}&player=${encodeURIComponent(me.playerId)}`);
+  es.onmessage=e=>{ try{ S=JSON.parse(e.data); render(); }catch(_){} };
+  es.onerror=()=>{ /* 自动重连由浏览器处理 */ };
+  window._es=es;
+}
+async function post(url,data){try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});return await r.json();}catch(e){toast('网络错误');return {ok:false};}}
+async function act(type,extra){const d=Object.assign({code:me.code,playerId:me.playerId,type},extra||{});const r=await post('/api/action',d);if(r&&r.error)toast(r.error);return r;}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1700);}
+
+// ---------- render ----------
+function render(){
+  if(!S)return;
+  const ctx=S.phase+'#'+S.day;
+  if(ctx!==lastCtx){ selTarget=null; selVote=null; selVoteDone=false; wHeal=false; wPoison=null; lastCtx=ctx; }
+  renderMe();
+  const stage=document.getElementById('stage');
+  if(S.phase==='lobby') stage.innerHTML=renderLobby();
+  else if(S.phase==='night') stage.innerHTML=renderNight();
+  else if(S.phase==='day') stage.innerHTML=renderDay();
+  else if(S.phase==='vote') stage.innerHTML=renderVote();
+  else if(S.phase==='hunter') stage.innerHTML=renderHunter();
+  else if(S.phase==='end') stage.innerHTML=renderEnd();
+  // chat panel visibility
+  const cp=document.getElementById('chatPanel');
+  cp.style.display=(S.phase==='day'||S.phase==='vote'||S.phase==='hunter')?'flex':'none';
+  renderChat();
+}
+function renderMe(){
+  const d=ROLE_DEFS[S.you.role];
+  const emo = S.you.role? d.emoji : '❓';
+  const rname = S.you.role? d.name : '未分配';
+  const team = S.you.team==='wolf'?'b-wolf':'b-good';
+  const teamTxt = S.you.team==='wolf'?'狼人阵营':'好人阵营';
+  document.getElementById('meBar').innerHTML=`
+    <div class="av">${emo}</div>
+    <div><div class="mt">${S.you.name} · 房间 ${S.code}</div><div class="mn">${rname}${S.you.alive?'':' · 已出局'}</div></div>
+    <div class="badge ${team}">${teamTxt}</div>`;
+}
+function aliveList(){return S.players.filter(p=>p.alive);}
+function pbtn(p,sel,onClick,disabled){
+  return `<div class="pbtn ${sel?'sel':''} ${disabled?'dead':''}" ${onClick?`onclick="${onClick}"`:''}>
+    <div class="pemoji">${ROLE_DEFS[p.role?p.role:'villager'].emoji}</div>
+    <div class="pid">#${p.id}</div><div class="pname">${escapeHtml(p.name)}</div></div>`;
+}
+function escapeHtml(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+function renderLobby(){
+  const ps=S.players.map(p=>`<span class="pc">${escapeHtml(p.name)}</span>`).join('');
+  return `<div class="card">
+    <div class="title-c"><div class="big">🛋️</div><div>等待玩家加入</div></div>
+    <div class="codebig">${S.code}</div>
+    <p class="center muted">把房间号告诉朋友，让他们加入</p>
+    <div class="players-c">${ps}</div>
+    <p class="center muted" style="margin-top:8px">已加入 ${S.players.length} 人</p>
+  </div>
+  <div class="foot" style="margin-top:12px">
+    ${S.you.id===S.hostId?`<button class="btn" onclick="startGame()">开始游戏（${S.players.length}人）</button>`:`<p class="center muted">等待法官开始游戏…</p>`}
+  </div>`;
+}
+async function startGame(){const rr=await post('/api/start',{code:me.code,playerId:me.playerId});if(!rr.ok)toast(rr.error||'开始失败');}
+
+function renderNight(){
+  const n=S.night;
+  let body='';
+  if(S.myAction){
+    const a=S.myAction;
+    if(a.type==='wolf'){
+      body=`<div class="prompt"><b>🐺 狼人行动</b><br>与同伴商议，选择今晚要击杀的玩家。</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="foot" style="margin-top:10px">
+          <button class="btn ghost sm" onclick="selTarget=null;render();">不击杀</button>
+          <button class="btn" ${selTarget==null?'disabled':''} onclick="submitWolf()">确认击杀</button>
+        </div>`;
+    }else if(a.type==='guard'){
+      body=`<div class="prompt"><b>🛡️ 守卫行动</b><br>选择今晚要守护的玩家（不能连续两晚守同一人）。</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="foot" style="margin-top:10px">
+          <button class="btn ghost sm" onclick="selTarget=null;render();">放弃守护</button>
+          <button class="btn" ${selTarget==null?'disabled':''} onclick="submitGuard()">确认守护</button>
+        </div>`;
+    }else if(a.type==='seer'){
+      if(a.done){
+        const res=a.result==='wolf'?'🌑 狼人':'🌞 好人';
+        body=`<div class="prompt center"><b>🔮 查验结果</b><br><span style="font-size:18px">${res}</span><br>（等待其他角色行动…）</div>`;
+      }else{
+        body=`<div class="prompt"><b>🔮 预言家行动</b><br>选择一名玩家进行查验。</div>
+          <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+          <div class="foot" style="margin-top:10px"><button class="btn" ${selTarget==null?'disabled':''} onclick="submitSeer()">查验</button></div>`;
+      }
+    }else if(a.type==='witch'){
+      const victim=a.victim?`今晚倒下的是 <b>${a.victim}</b>。`:'今晚狼人没有行动。';
+      let ctrl='';
+      if(a.victim && a.healAvail && !wPoison){
+        ctrl+=`<button class="btn ghost" style="margin-bottom:8px" onclick="wHeal=!wHeal;wPoison=null;render();">${wHeal?'💊 已选：救 '+a.victim:'💊 使用解药救 '+a.victim}</button>`;
+      }
+      if(a.poisonAvail && !wHeal){
+        ctrl+=`<div class="label" style="margin-top:4px">🧪 使用毒药（点选目标）</div><div class="pgrid">${aliveList().map(t=>pbtn(t,wPoison===t.id,`wPoison=${t.id};render();`)).join('')}</div>`;
+      }else if(a.poisonAvail && wHeal){
+        ctrl+=`<div class="prompt" style="margin-top:4px">已使用解药，今晚不能再下毒。</div>`;
+      }else if(!a.poisonAvail && !a.healAvail){
+        ctrl+=`<div class="prompt" style="margin-top:4px">解药与毒药均已用完。</div>`;
+      }
+      body=`<div class="prompt"><b>🧪 女巫行动</b><br>${victim}<br>每晚只能使用一种药剂。</div>${ctrl}
+        <div class="foot" style="margin-top:10px"><button class="btn" onclick="submitWitch()">结束女巫行动</button></div>`;
+    }
+  }else{
+    body=`<div class="prompt center">第 ${S.day} 夜 · <b>${n?n.stepName:''}</b><br>等待其他角色行动，请稍候…<br><br>（你是 ${ROLE_DEFS[S.you.role].name}，当前无需操作）</div>`;
+  }
+  return `<div class="title-c"><span class="big">🌙</span><div>第 ${S.day} 夜</div><span class="badge nighttag">法官主持中</span></div>${body}`;
+}
+function submitWolf(){act('wolf_kill',{target:selTarget});selTarget=null;}
+function submitGuard(){act('guard',{target:selTarget});selTarget=null;}
+function submitSeer(){act('seer',{target:selTarget});selTarget=null;}
+function submitWitch(){act('witch',{heal:wHeal,poison:wPoison});wHeal=false;wPoison=null;}
+
+function renderDay(){
+  let dead='';
+  if(S.lastDeaths.length===0) dead='昨夜是<b>平安夜</b>，没有人出局。';
+  else dead='昨夜倒下：<br>'+S.lastDeaths.map(d=>`<b>${escapeHtml(d.name)}</b>（${d.role}）`).join('、');
+  const hostBtn = S.you.id===S.hostId?`<button class="btn" style="margin-top:10px" onclick="startVote()">🗳️ 开始投票</button>`:`<p class="center muted" style="margin-top:10px">等待法官开始投票…</p>`;
+  return `<div class="title-c"><span class="big">☀️</span><div>第 ${S.day} 天 · 天亮了</div></div>
+    <div class="card"><div class="prompt">${dead}</div>${hostBtn}</div>
+    <p class="center muted" style="margin-top:10px">大家开始发言讨论吧 👇</p>`;
+}
+async function startVote(){const r=await act('start_vote');}
+
+function renderVote(){
+  const alive=aliveList();
+  const meAlive=S.you.alive;
+  let body='';
+  if(!meAlive){
+    body=`<div class="prompt center">你已出局，等待其他玩家投票（${S.votesCount}/${S.aliveCount}）…</div>`;
+  }else{
+    const voted = S.votesCount; // 不含自己是否已投（服务端未单独下发），用本地判断
+    if(selVoteDone){
+      body=`<div class="prompt center">✅ 你已投票，等待其他玩家（${S.votesCount}/${S.aliveCount}）…</div>`;
+    }else{
+      body=`<div class="prompt"><b>🗳️ 投票放逐</b><br>选择你要投的玩家（不能投自己）。</div>
+        <div class="pgrid">${alive.filter(p=>p.id!==S.you.id).map(t=>pbtn(t,selVote===t.id,`selVote=${t.id};render();`)).join('')}</div>
+        <div class="foot" style="margin-top:10px">
+          <button class="btn ghost sm" onclick="selVote=-1;doVote();">弃票</button>
+          <button class="btn" ${selVote==null?'disabled':''} onclick="doVote()">确认投票</button>
+        </div>`;
+    }
+  }
+  return `<div class="title-c"><span class="big">🗳️</span><div>第 ${S.day} 天 · 投票</div></div>${body}`;
+}
+function doVote(){ if(selVote===undefined)return; selVoteDone=true; act('vote',{target:selVote}); }
+
+function renderHunter(){
+  if(S.hunt && S.hunt.waiting){
+    return `<div class="title-c"><span class="big">🏹</span><div>猎人开枪</div></div>
+      <div class="prompt center">等待猎人开枪…</div>`;
+  }
+  if(S.hunt && S.hunt.targets){
+    return `<div class="title-c"><span class="big">🏹</span><div>你是猎人，可以开枪</div></div>
+      <div class="prompt"><b>🏹 猎人开枪</b><br>选择要带走的玩家。</div>
+      <div class="pgrid">${S.hunt.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+      <div class="foot" style="margin-top:10px">
+        <button class="btn ghost sm" onclick="selTarget=null;act('hunter_shoot',{target:null});">不开枪</button>
+        <button class="btn" ${selTarget==null?'disabled':''} onclick="act('hunter_shoot',{target:selTarget});selTarget=null;">开枪</button>
+      </div>`;
+  }
+  return `<div class="prompt center">处理猎人…</div>`;
+}
+
+function renderEnd(){
+  const win=S.result==='good'?'🎉 好人阵营胜利！':'🐺 狼人阵营胜利！';
+  const cls=S.result==='good'?'b-good':'b-wolf';
+  const rs=S.players.map(p=>{const d=ROLE_DEFS[p.role];return `<div class="ri"><span class="re">${d.emoji}</span><span style="flex:1">${escapeHtml(p.name)}</span><span class="${p.team==='wolf'?'b-wolf':'b-good'}">${d.name}</span><span class="muted">${p.alive?'存活':'出局'}</span></div>`;}).join('');
+  return `<div class="title-c"><div class="codebig" style="font-size:26px;color:${S.result==='good'?'var(--good)':'var(--wolf)'}">${win}</div></div>
+    <div class="card"><div class="rolesum">${rs}</div></div>
+    <div class="foot" style="margin-top:12px"><button class="btn" onclick="location.reload()">返回首页</button></div>`;
+}
+
+// chat
+function renderChat(){
+  const box=document.getElementById('chatLog');
+  if(!S||!S.chat)return;
+  box.innerHTML=S.chat.map(c=>`<div class="cm"><span class="cn">${escapeHtml(c.name)}：</span>${escapeHtml(c.text)}</div>`).join('');
+  box.scrollTop=box.scrollHeight;
+}
+async function sendChat(){const t=document.getElementById('chatText').value.trim();if(!t)return;document.getElementById('chatText').value='';await act('chat',{text:t});}
+
+// log
+function openLog(){const c=document.getElementById('logContent');c.innerHTML=(S&&S.log)?S.log.slice().reverse().map(m=>`<div class="lm">[第${m.day}轮] ${escapeHtml(m.msg)}</div>`).join(''):'暂无';document.getElementById('logModal').classList.add('show');}
+
+buildHome();
+</script>
+</body>
+</html>

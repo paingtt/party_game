@@ -1,0 +1,13 @@
+{
+  "name": "party-werewolf-online",
+  "version": "1.0.0",
+  "description": "聚会狼人杀联网版 Demo（Node SSE 后端 + 移动端网页），可免费部署到 Render / Koyeb",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true
+}

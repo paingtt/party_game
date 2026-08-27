@@ -1,0 +1,13 @@
+# Render 部署配置（免费版）
+# 在 Render 后台 "New" -> "Blueprint" 选择本仓库即可自动识别
+services:
+  - type: web
+    name: party-werewolf
+    runtime: node
+    plan: free
+    region: oregon          # 可选：singapore 离国内更近
+    branch: main
+    buildCommand: "npm install"
+    startCommand: "node server.js"
+    healthCheckPath: /
+    envVars: []
