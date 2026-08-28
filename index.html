@@ -693,7 +693,7 @@ function renderSheriff(){
   const alive=aliveList();
   let body=`<div class="prompt"><b>🔰 警长竞选</b><br>投票选出警长，警长投票计 2 票。${S.you.alive?'请选择你要支持的玩家：':'（你已出局，旁观竞选）'}</div>`;
   if(S.you.alive){
-    body+=`<div class="pgrid">${alive.map(t=>pbtn(t,selSheriff===t.id,`selSheriff=${t.id};render();`)).join('')}</div>`;
+    body+=`<div class="pgrid">${alive.map(t=>pbtn(t,selSheriff===t.id,`selSheriff='${t.id}';render();`)).join('')}</div>`;
     body+=`<div class="foot" style="margin-top:10px"><button class="btn ghost sm" onclick="selSheriff=-1;doSheriff();">弃票</button><button class="btn" ${selSheriff==null?'disabled':''} onclick="doSheriff()">确认投票</button></div>`;
   } else {
     body+=`<p class="center muted">等待存活玩家竞选…</p>`;
@@ -787,14 +787,14 @@ function renderNightWolf(){
     const a=S.myAction;
     if(a.type==='wolf'){
       body=`<div class="prompt"><b>🐺 狼人行动</b><br>与同伴商议，选择今晚要击杀的玩家。</div>
-        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget='${t.id}';render();`)).join('')}</div>
         <div class="foot" style="margin-top:10px">
           <button class="btn ghost sm" onclick="selTarget=null;render();">不击杀</button>
           <button class="btn" ${selTarget==null?'disabled':''} onclick="submitWolf()">确认击杀</button>
         </div>`;
     }else if(a.type==='guard'){
       body=`<div class="prompt"><b>🛡️ 守卫行动</b><br>选择今晚要守护的玩家（不能连续两晚守同一人）。</div>
-        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget='${t.id}';render();`)).join('')}</div>
         <div class="foot" style="margin-top:10px">
           <button class="btn ghost sm" onclick="selTarget=null;render();">放弃守护</button>
           <button class="btn" ${selTarget==null?'disabled':''} onclick="submitGuard()">确认守护</button>
@@ -805,7 +805,7 @@ function renderNightWolf(){
         body=`<div class="prompt center"><b>🔮 查验结果</b><br><span style="font-size:18px">${res}</span><br>（等待其他角色行动…）</div>`;
       }else{
         body=`<div class="prompt"><b>🔮 预言家行动</b><br>选择一名玩家进行查验。</div>
-          <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+          <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget='${t.id}';render();`)).join('')}</div>
           <div class="foot" style="margin-top:10px"><button class="btn" ${selTarget==null?'disabled':''} onclick="submitSeer()">查验</button></div>`;
       }
     }else if(a.type==='witch'){
@@ -815,7 +815,7 @@ function renderNightWolf(){
         ctrl+=`<button class="btn ghost" style="margin-bottom:8px" onclick="wHeal=!wHeal;wPoison=null;render();">${wHeal?'💊 已选：救 '+a.victim:'💊 使用解药救 '+a.victim}</button>`;
       }
       if(a.poisonAvail && !wHeal){
-        ctrl+=`<div class="label" style="margin-top:4px">🧪 使用毒药（点选目标）</div><div class="pgrid">${aliveList().map(t=>pbtn(t,wPoison===t.id,`wPoison=${t.id};render();`)).join('')}</div>`;
+        ctrl+=`<div class="label" style="margin-top:4px">🧪 使用毒药（点选目标）</div><div class="pgrid">${aliveList().map(t=>pbtn(t,wPoison===t.id,`wPoison='${t.id}';render();`)).join('')}</div>`;
       }else if(a.poisonAvail && wHeal){
         ctrl+=`<div class="prompt" style="margin-top:4px">已使用解药，今晚不能再下毒。</div>`;
       }else if(!a.poisonAvail && !a.healAvail){
@@ -841,27 +841,27 @@ function renderNightKill(){
     const a=S.myAction;
     if(a.type==='butterfly'){
       body=`<div class="prompt"><b>🦋 花蝴蝶护体</b><br>选择要保护的人（不能保自己）。被保护者今晚免疫被杀/被狙/被针；但若你今晚死亡，被保护者也会同死。</div>
-        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget='${t.id}';render();`)).join('')}</div>
         <div class="foot" style="margin-top:10px"><button class="btn ghost sm" onclick="selTarget=null;render();">放弃</button><button class="btn" ${selTarget==null?'disabled':''} onclick="submitButterfly()">确认护体</button></div>`;
     }else if(a.type==='sniper'){
       body=`<div class="prompt"><b>🎯 狙击手狙击</b><br>选择今晚要狙杀的人（可狙自己）。</div>
-        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget='${t.id}';render();`)).join('')}</div>
         <div class="foot" style="margin-top:10px"><button class="btn ghost sm" onclick="selTarget=null;render();">放弃</button><button class="btn" ${selTarget==null?'disabled':''} onclick="submitSniper()">确认狙击</button></div>`;
     }else if(a.type==='killer'){
       body=`<div class="prompt"><b>🔪 杀手杀人</b><br>与同伴商议，选择今晚要击杀的人。</div>
-        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget='${t.id}';render();`)).join('')}</div>
         <div class="foot" style="margin-top:10px"><button class="btn ghost sm" onclick="selTarget=null;render();">不杀</button><button class="btn" ${selTarget==null?'disabled':''} onclick="submitKiller()">确认击杀</button></div>`;
     }else if(a.type==='doctor'){
       const victim=a.victim?`今晚倒下的是 <b>${a.victim}</b>。`:'今晚暂时无人倒下。';
       body=`<div class="prompt"><b>⚕️ 医生救治</b><br>${victim}<br>选择一名玩家：若其被刀/狙则可救活；否则累计一次空针，两次空针将其扎死。</div>
-        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget='${t.id}';render();`)).join('')}</div>
         <div class="foot" style="margin-top:10px"><button class="btn" ${selTarget==null?'disabled':''} onclick="submitDoctor()">确认</button></div>`;
     }else if(a.type==='police'){
       if(a.done){ const res=a.result==='wolf'?'🌑 杀手阵营':'🌞 好人阵营'; body=`<div class="prompt center"><b>🚓 查验结果</b><br><span style="font-size:18px">${res}</span><br>（等待其他角色行动…）</div>`; }
-      else body=`<div class="prompt"><b>🚓 警察指认</b><br>选择一名玩家进行查验。</div><div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div><div class="foot" style="margin-top:10px"><button class="btn" ${selTarget==null?'disabled':''} onclick="submitPolice()">查验</button></div>`;
+      else body=`<div class="prompt"><b>🚓 警察指认</b><br>选择一名玩家进行查验。</div><div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget='${t.id}';render();`)).join('')}</div><div class="foot" style="margin-top:10px"><button class="btn" ${selTarget==null?'disabled':''} onclick="submitPolice()">查验</button></div>`;
     }else if(a.type==='oldman'){
       body=`<div class="prompt"><b>🌲 森林老人禁言</b><br>选择一名玩家，其明天白天不能发言（不能禁自己）。</div>
-        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+        <div class="pgrid">${a.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget='${t.id}';render();`)).join('')}</div>
         <div class="foot" style="margin-top:10px"><button class="btn ghost sm" onclick="selTarget=null;render();">放弃</button><button class="btn" ${selTarget==null?'disabled':''} onclick="submitOldman()">确认禁言</button></div>`;
     }
   }else{
@@ -931,7 +931,7 @@ function renderVote(){
       body=`<div class="prompt center">✅ 你已投票，等待其他玩家（${S.votesCount}/${S.aliveCount}）…</div>`;
     }else{
       body=`<div class="prompt"><b>🗳️ 投票放逐</b><br>选择你要投的玩家（不能投自己）。</div>
-        <div class="pgrid">${alive.filter(p=>p.id!==S.you.id).map(t=>pbtn(t,selVote===t.id,`selVote=${t.id};render();`)).join('')}</div>
+        <div class="pgrid">${alive.filter(p=>p.id!==S.you.id).map(t=>pbtn(t,selVote===t.id,`selVote='${t.id}';render();`)).join('')}</div>
         <div class="foot" style="margin-top:10px">
           <button class="btn ghost sm" onclick="selVote=-1;doVote();">弃票</button>
           <button class="btn" ${selVote==null?'disabled':''} onclick="doVote()">确认投票</button>
@@ -956,7 +956,7 @@ function renderHunter(){
   if(S.hunt && S.hunt.targets){
     return `<div class="title-c"><span class="big">🏹</span><div>你是猎人，可以开枪</div></div>
       <div class="prompt"><b>🏹 猎人开枪</b><br>选择要带走的玩家。</div>
-      <div class="pgrid">${S.hunt.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget=${t.id};render();`)).join('')}</div>
+      <div class="pgrid">${S.hunt.targets.map(t=>pbtn(t,selTarget===t.id,`selTarget='${t.id}';render();`)).join('')}</div>
       <div class="foot" style="margin-top:10px">
         <button class="btn ghost sm" onclick="selTarget=null;act('hunter_shoot',{target:null});">不开枪</button>
         <button class="btn" ${selTarget==null?'disabled':''} onclick="act('hunter_shoot',{target:selTarget});selTarget=null;">开枪</button>
