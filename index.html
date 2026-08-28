@@ -277,7 +277,10 @@ const MODES = {
     label: '血染钟楼',
     roles: {
       demon:{name:'恶魔',emoji:'💀',team:'wolf'},
-      minion:{name:'爪牙',emoji:'🤝',team:'wolf'},
+      scarlet_woman:{name:'绯红女郎',emoji:'🕷️',team:'wolf'},
+      spy:{name:'间谍',emoji:'🕵️',team:'wolf'},
+      baron:{name:'男爵',emoji:'🎩',team:'wolf'},
+      poisoner:{name:'毒师',emoji:'☠️',team:'wolf'},
       fortune_teller:{name:'占卜师',emoji:'🔮',team:'good'},
       undertaker:{name:'送葬者',emoji:'⚰️',team:'good'},
       monk:{name:'僧侣',emoji:'🧘',team:'good'},
@@ -297,7 +300,7 @@ const MODES = {
       recluse:{name:'隐士',emoji:'🏠',team:'good'},
       butler:{name:'管家',emoji:'🤵',team:'good'},
     },
-    roleOrder: ['demon','minion','fortune_teller','undertaker','monk','ravenkeeper','virgin','chambermaid','empath','washerwoman','investigator','saint','slayer','soldier','mayor','chef','librarian','drunk','recluse','butler'],
+    roleOrder: ['demon','scarlet_woman','spy','baron','poisoner','fortune_teller','undertaker','monk','ravenkeeper','virgin','chambermaid','empath','washerwoman','investigator','saint','slayer','soldier','mayor','chef','librarian','drunk','recluse','butler'],
     presets: {},
     minPlayers: 5, minWolves: 1,
   },
@@ -311,12 +314,14 @@ let selTarget=null, selVote=null, selVoteDone=false, wHeal=false, wPoison=null, 
 let _reconnecting=false, _firstMsgTimer=null, _sseErrors=0; // 断线自动重连状态
 let selSheriff=null, roleCardShown=false; // 警长竞选选择 / 角色卡是否已自动弹过
 let botcRoleConfig=null, botcSize=0; // 血染钟楼：按人数随机生成的角色配置
-const BOTC_TOWNSFOLK=['fortune_teller','undertaker','monk','ravenkeeper','virgin','chambermaid','empath','washerwoman','investigator','saint','slayer','soldier','mayor','chef','librarian'];
-const BOTC_OUTSIDERS=['drunk','recluse','butler'];
+const BOTC_TOWNSFOLK=['fortune_teller','undertaker','monk','ravenkeeper','virgin','chambermaid','empath','washerwoman','investigator','slayer','soldier','mayor','chef','librarian'];
+const BOTC_OUTSIDERS=['drunk','recluse','butler','saint'];
+const BOTC_MINIONS=['scarlet_woman','spy','baron','poisoner'];
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 function botcGenRoles(k){
   const good=k-2, outsiderCount=Math.min(3,Math.max(1,Math.floor((k-5)/2)+1)), townCount=good-outsiderCount;
-  const cfg={demon:1,minion:1};
+  const cfg={demon:1};
+  cfg[shuffle(BOTC_MINIONS.slice())[0]]=1;
   shuffle(BOTC_TOWNSFOLK.slice()).slice(0,townCount).forEach(r=>cfg[r]=(cfg[r]||0)+1);
   shuffle(BOTC_OUTSIDERS.slice()).slice(0,outsiderCount).forEach(r=>cfg[r]=(cfg[r]||0)+1);
   return cfg;
@@ -344,7 +349,10 @@ const ROLE_DESC = {
   },
   botc: {
     demon: '恶魔阵营（邪恶）。每晚可击杀一名玩家。恶魔死亡时若善良未触发失败条件，善良获胜。',
-    minion: '恶魔阵营（邪恶）。知道谁是恶魔，与恶魔私下商量并保护其存活；恶魔不会误杀爪牙。',
+    scarlet_woman: '恶魔阵营（爪牙）。当恶魔死亡时，你变成新的恶魔继续游戏（由说书人主持）。',
+    spy: '恶魔阵营（爪牙）。你获得完整的角色列表（说书人提供），可冒充任何角色。',
+    baron: '恶魔阵营（爪牙）。开局时使本局额外增加 2 名「局外人」（由说书人决定，玩家数会变化）。',
+    poisoner: '恶魔阵营（爪牙）。每晚选择一名玩家使其「中毒」，中毒者当天的信息会出错（由说书人主持）。',
     fortune_teller: '善良阵营。每晚选择两名玩家，得知其中是否有恶魔（可能得到假象，如隐士）。',
     undertaker: '善良阵营。每当有玩家在夜间死亡后，你得知该玩家的真实角色。',
     monk: '善良阵营。每晚守护一名玩家，被守护者当晚免疫恶魔击杀。',
