@@ -92,6 +92,21 @@
   .pc{background:var(--card2);border:1px solid var(--line);border-radius:20px;padding:5px 11px;font-size:13px;}
   .modebar{display:flex;gap:8px;margin-bottom:6px;}
   .modebar .chip{flex:1;text-align:center;}
+  .timerbar{margin:8px 0 2px;display:none;}
+  .timerbar .tlabel{font-size:12px;color:var(--sub);margin-bottom:4px;text-align:center;}
+  .timerbar .tbar{height:6px;background:var(--bg2);border-radius:6px;overflow:hidden;}
+  .timerbar .tfill{height:100%;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width 1s linear;}
+  .rolecard .remoji{font-size:42px;margin-bottom:4px;}
+  .rolecard .rteam{display:inline-block;font-size:12px;padding:3px 10px;border-radius:20px;margin:6px 0;}
+  .rolelist{display:flex;flex-direction:column;gap:8px;text-align:left;max-height:56vh;overflow:auto;}
+  .rolelist .ri{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:13px;line-height:1.55;}
+  .rolelist .ri .rn{font-weight:800;font-size:14px;}
+  .rolelist .ri .re{font-size:18px;margin-right:6px;}
+  .godview .gv{text-align:left;}
+  .godview .gv .ri{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:13px;margin-bottom:5px;}
+  .godview .gv .ri .gn{font-weight:700;flex:1;}
+  .godview .gv .ri .gs{font-size:11px;color:var(--sub);}
+  .godview .sum{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--sub);line-height:1.6;margin-top:8px;text-align:left;}
 </style>
 </head>
 <body>
@@ -99,6 +114,7 @@
   <header>
     <div class="logo"><span>🎲</span> 聚会桌游</div>
     <button class="topbtn" id="logBtn" onclick="openLog()" style="display:none">📜 日志</button>
+    <button class="topbtn" id="judgeBtn" onclick="openGodView()" style="display:none">🔍 裁判总览</button>
   </header>
 
   <!-- HOME -->
@@ -127,6 +143,7 @@
         <input type="checkbox" id="noJudge" style="width:auto"> 无需法官（全员准备后自动开局，过半玩家确认即推进）
       </label>
       <button class="btn" onclick="createRoom()">创建房间 →</button>
+      <button class="btn ghost" style="margin-top:8px" onclick="openRolesRef()">📖 角色说明</button>
     </div>
     <div class="card" style="margin-top:12px;">
       <div class="label">加入已有房间</div>
@@ -141,6 +158,7 @@
   <!-- GAME -->
   <section id="game" class="screen">
     <div class="me" id="meBar"></div>
+    <div class="timerbar" id="phaseTimer"></div>
     <div id="stage"></div>
     <div id="chatPanel">
       <div id="chatLog"></div>
@@ -167,6 +185,36 @@
     <div class="md">选择要同归于尽的目标（引爆后你与目标同时出局；若目标是杀手方，则只有你出局）。本局仅一次。</div>
     <div id="bombTargets" class="pgrid"></div>
     <button class="btn ghost" style="margin-top:12px" onclick="document.getElementById('bombModal').classList.remove('show')">取消</button>
+  </div>
+</div>
+
+<!-- 角色卡（我的角色） -->
+<div class="modal-mask" id="roleModal">
+  <div class="modal rolecard">
+    <div class="remoji" id="rcEmoji">🐺</div>
+    <div class="mt" id="rcName" style="text-align:center">角色</div>
+    <div style="text-align:center"><span class="rteam" id="rcTeam">阵营</span></div>
+    <div class="md" id="rcDesc" style="text-align:left"></div>
+    <button class="btn" style="margin-top:10px" onclick="document.getElementById('roleModal').classList.remove('show')">知道了</button>
+  </div>
+</div>
+
+<!-- 角色说明（全部角色速查） -->
+<div class="modal-mask" id="rolesRefModal">
+  <div class="modal">
+    <div class="mt" style="text-align:center">📖 角色说明</div>
+    <div class="rolelist" id="rolesRefList"></div>
+    <button class="btn" style="margin-top:12px" onclick="document.getElementById('rolesRefModal').classList.remove('show')">关闭</button>
+  </div>
+</div>
+
+<!-- 裁判总览（上帝视角） -->
+<div class="modal-mask" id="godModal">
+  <div class="modal godview">
+    <div class="mt" style="text-align:center">🔍 裁判总览</div>
+    <div class="gv" id="godList"></div>
+    <div class="sum" id="godSum"></div>
+    <button class="btn" style="margin-top:12px" onclick="document.getElementById('godModal').classList.remove('show')">关闭</button>
   </div>
 </div>
 
@@ -213,9 +261,33 @@ const MODES = {
 let currentMode='werewolf';
 let currentPreset='6人';
 let ROLE_DEFS = MODES.werewolf.roles; // 进入游戏后会按 S.mode 更新
-let me=null; // {code,playerId,isHost,name}
+let me=null; // {code,playerId,isHost,name,mode}
 let S=null; // latest view
 let selTarget=null, selVote=null, selVoteDone=false, wHeal=false, wPoison=null, lastCtx='';
+let _reconnecting=false, _firstMsgTimer=null, _sseErrors=0; // 断线自动重连状态
+let selSheriff=null, roleCardShown=false; // 警长竞选选择 / 角色卡是否已自动弹过
+
+// 角色技能说明（新手速查）
+const ROLE_DESC = {
+  werewolf: {
+    werewolf: '狼人阵营。每晚与狼队友一起刀人，需狼队达成一致。',
+    seer: '好人阵营。每晚可查验一名玩家，得知其为狼人或好人。',
+    witch: '好人阵营。拥有解药与毒药各一瓶：可救活被刀者，或毒杀一人（同一晚不能既救又毒）。',
+    hunter: '好人阵营。被放逐或刀杀（非被毒）出局时，可开枪带走一名玩家。',
+    guard: '好人阵营。每晚守护一名玩家，不可连续两晚守同一人（与女巫同守同救视规则）。',
+    villager: '好人阵营。无特殊能力，靠发言与投票找出狼人。',
+  },
+  killgame: {
+    killer: '杀手阵营。每晚与狙击手商议，选择要击杀的人。',
+    sniper: '杀手阵营。每晚可狙杀一人（仅一次机会，命中即死）。',
+    terrorist: '杀手阵营。被投票放逐时可引爆，与目标同归于尽（目标若为杀手方则只有你出局）。',
+    police: '好人阵营。每晚指认一人，得知其阵营。',
+    doctor: '好人阵营。每晚可救治一人；若救错人则累计一次空针，两次空针将其扎死。',
+    butterfly: '好人阵营。每晚护体一人，被护者免疫当晚致死；若花蝴蝶本人死亡，被护者同死。',
+    oldman: '好人阵营。每晚禁言一人，其次日白天不能发言。',
+    civilian: '好人阵营。无特殊能力，靠发言与投票找出杀手。',
+  },
+};
 
 // ---------- setup UI ----------
 function buildHome(){
@@ -253,7 +325,8 @@ async function createRoom(){
   const noJudge=document.getElementById('noJudge').checked;
   const r=await post('/api/create',{name,roles,mode:currentMode,noJudge});
   if(!r.ok){toast(r.error||'创建失败');return;}
-  me={code:r.code,playerId:r.playerId,isHost:true,name};
+  me={code:r.code,playerId:r.playerId,isHost:true,name,mode:currentMode};
+  saveMe();
   seedView(name,r.code,r.playerId,noJudge); // 立即渲染房间号，不等 SSE
   enterGame();
 }
@@ -263,7 +336,8 @@ async function joinRoom(){
   if(!code){toast('请输入房间号');return;}
   const r=await post('/api/join',{code,name});
   if(!r.ok){toast(r.error||'加入失败');return;}
-  me={code:r.code,playerId:r.playerId,isHost:false,name:name};
+  me={code:r.code,playerId:r.playerId,isHost:false,name:name,mode:currentMode};
+  saveMe();
   seedView(name,r.code,r.playerId);
   enterGame();
 }
@@ -284,10 +358,32 @@ function enterGame(){
 }
 function connectSSE(){
   const es=new EventSource(`/api/events?code=${encodeURIComponent(me.code)}&player=${encodeURIComponent(me.playerId)}`);
-  es.onmessage=e=>{ try{ S=JSON.parse(e.data); render(); }catch(_){} };
-  es.onerror=()=>{ /* 自动重连由浏览器处理 */ };
+  if(_reconnecting){ _firstMsgTimer=setTimeout(onRoomLost, 6000); } // 重连场景：6s 内没收到消息=房间已不存在
+  es.onmessage=e=>{
+    if(_firstMsgTimer){ clearTimeout(_firstMsgTimer); _firstMsgTimer=null; }
+    _reconnecting=false;
+    try{ S=JSON.parse(e.data); render(); }catch(_){}
+  };
+  es.onerror=()=>{
+    if(_reconnecting){ _sseErrors++; if(_sseErrors>=3) onRoomLost(); } // 浏览器会自动重试；多次失败则放弃
+  };
   window._es=es;
 }
+function onRoomLost(){
+  if(window._es){ try{window._es.close();}catch(_){} window._es=null; }
+  goHome();
+}
+function goHome(){
+  if(window._es){ try{window._es.close();}catch(_){} window._es=null; }
+  clearMe();
+  _reconnecting=false;
+  me=null; S=null; selTarget=null; selVote=null; selVoteDone=false; wHeal=false; wPoison=null; lastCtx=''; roleCardShown=false; selSheriff=null;
+  document.getElementById('game').classList.remove('active');
+  document.getElementById('home').classList.add('active');
+  document.getElementById('logBtn').style.display='none';
+}
+function saveMe(){ if(me) try{ localStorage.setItem('pg_me', JSON.stringify(me)); }catch(_){} }
+function clearMe(){ try{ localStorage.removeItem('pg_me'); }catch(_){} }
 async function post(url,data){try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const t=await r.text();try{return JSON.parse(t);}catch(e){return {ok:false,error:'服务器正在唤醒，请稍候再试'};}}catch(e){toast('网络错误');return {ok:false};}}
 async function act(type,extra){const d=Object.assign({code:me.code,playerId:me.playerId,type},extra||{});const r=await post('/api/action',d);if(r&&r.error)toast(r.error);return r;}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1700);}
@@ -299,18 +395,24 @@ function render(){
   const ctx=S.phase+'#'+S.day;
   if(ctx!==lastCtx){ selTarget=null; selVote=null; selVoteDone=false; wHeal=false; wPoison=null; lastCtx=ctx; }
   renderMe();
+  // 首次进入游戏：自动弹出“我的角色”卡
+  if(S.phase!=='lobby' && S.you.role && !roleCardShown){ roleCardShown=true; showRoleCard(); }
   const stage=document.getElementById('stage');
   if(S.phase==='lobby') stage.innerHTML=renderLobby();
   else if(S.phase==='night') stage.innerHTML=(S.mode==='killgame')?renderNightKill():renderNightWolf();
+  else if(S.phase==='sheriff') stage.innerHTML=renderSheriff();
   else if(S.phase==='day') stage.innerHTML=renderDay();
   else if(S.phase==='vote') stage.innerHTML=renderVote();
   else if(S.phase==='hunter') stage.innerHTML=renderHunter();
+  else if(S.phase==='lastwords') stage.innerHTML=renderLastWords();
   else if(S.phase==='end') stage.innerHTML=renderEnd();
   const cp=document.getElementById('chatPanel');
-  cp.style.display=(S.phase==='day'||S.phase==='vote'||S.phase==='hunter')?'flex':'none';
+  cp.style.display=(S.phase==='day'||S.phase==='vote'||S.phase==='hunter'||S.phase==='sheriff'||S.phase==='lastwords')?'flex':'none';
   // 被森林老人禁言则禁用发言
   const ci=document.getElementById('chatInput');
   ci.classList.toggle('disabled', !!(S.silencedId && S.you.id===S.silencedId));
+  // 裁判总览按钮仅 host 可见
+  document.getElementById('judgeBtn').style.display=(S.you.id===S.hostId)?'':'none';
   renderChat();
 }
 function renderMe(){
@@ -322,16 +424,125 @@ function renderMe(){
   document.getElementById('meBar').innerHTML=`
     <div class="av">${emo}</div>
     <div><div class="mt">${S.you.name} · 房间 ${S.code}</div><div class="mn">${rname}${S.you.alive?'':' · 已出局'}</div></div>
-    <div class="badge ${team}">${teamTxt}</div>`;
+    <div class="badge ${team}">${teamTxt}</div>
+    <button class="topbtn" style="margin-left:8px" onclick="showRoleCard()">我的角色</button>`;
 }
 function aliveList(){return S.players.filter(p=>p.alive);}
 function pbtn(p,sel,onClick,disabled){
   const rd = ROLE_DEFS[p.role] || (currentMode==='killgame'?MODES.killgame.roles.civilian:MODES.werewolf.roles.villager);
+  const sh = p.sheriff ? '<div class="tag" style="color:var(--warn)">🔰</div>' : '';
   return `<div class="pbtn ${sel?'sel':''} ${disabled?'dead':''}" ${onClick?`onclick="${onClick}"`:''}>
     <div class="pemoji">${rd.emoji}</div>
-    <div class="pid">#${p.id}</div><div class="pname">${escapeHtml(p.name)}</div></div>`;
+    <div class="pid">#${p.id}</div><div class="pname">${escapeHtml(p.name)}</div>${sh}</div>`;
 }
 function escapeHtml(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+// ---------- 角色卡 / 角色说明 ----------
+function showRoleCard(){
+  if(!S||!S.you.role){ toast('身份尚未分配'); return; }
+  const d=ROLE_DEFS[S.you.role];
+  document.getElementById('rcEmoji').textContent=d.emoji;
+  document.getElementById('rcName').textContent=d.name;
+  const isWolf=S.you.team==='wolf';
+  const teamTxt=isWolf?(S.mode==='killgame'?'杀手阵营':'狼人阵营'):'好人阵营';
+  const tb=document.getElementById('rcTeam');
+  tb.textContent=teamTxt; tb.className='rteam '+(isWolf?'b-wolf':'b-good');
+  document.getElementById('rcDesc').textContent=(ROLE_DESC[S.mode]&&ROLE_DESC[S.mode][S.you.role])||'';
+  document.getElementById('roleModal').classList.add('show');
+}
+function openRolesRef(){
+  const mode=currentMode;
+  const list=MODES[mode].roleOrder.map(r=>{
+    const d=MODES[mode].roles[r];
+    const desc=(ROLE_DESC[mode]&&ROLE_DESC[mode][r])||'';
+    return `<div class="ri"><span class="re">${d.emoji}</span><div><div class="rn">${d.name} <span class="${d.team==='wolf'?'b-wolf':'b-good'}" style="font-size:11px">${d.team==='wolf'?'杀手/狼':'好人'}</span></div>${desc}</div></div>`;
+  }).join('');
+  document.getElementById('rolesRefList').innerHTML=list;
+  document.getElementById('rolesRefModal').classList.add('show');
+}
+
+// ---------- 裁判总览（上帝视角） ----------
+function openGodView(){
+  if(!S||!S.godView){ toast('仅房主（法官）可查看'); return; }
+  const g=S.godView;
+  const gv=g.players.map(p=>{
+    const rd=MODES[S.mode].roles[p.role]||{emoji:'❓',name:p.role||'?'};
+    const teamCls=p.team==='wolf'?'b-wolf':'b-good';
+    const st=p.alive?'存活':(p.connected?'离线':'出局');
+    return `<div class="ri"><span class="re">${rd.emoji}</span><span class="gn">${escapeHtml(p.name)}</span><span class="${teamCls}">${rd.name}</span><span class="gs">${st}</span></div>`;
+  }).join('');
+  document.getElementById('godList').innerHTML=gv;
+  let sum='';
+  if(g.sheriff) sum+=`🔰 警长：${escapeHtml(g.sheriff)}<br>`;
+  if(g.night){
+    const n=g.night;
+    const items=[];
+    if(n.wolfTarget) items.push('狼刀→'+n.wolfTarget);
+    if(n.killerTarget) items.push('杀手指杀→'+n.killerTarget);
+    if(n.sniperTarget) items.push('狙击→'+n.sniperTarget);
+    if(n.guardTarget) items.push('守卫→'+n.guardTarget);
+    if(n.seer) items.push('预言家验'+n.seer);
+    if(n.police) items.push('警察指认'+n.police);
+    if(n.doctorTarget) items.push('医生救→'+n.doctorTarget);
+    if(n.butterfly) items.push('花蝴蝶护体→'+n.butterfly);
+    if(n.oldman) items.push('禁言→'+n.oldman);
+    if(items.length) sum+='上一夜：'+items.join('；');
+  }
+  document.getElementById('godSum').innerHTML=sum||'（暂无夜晚行动记录）';
+  document.getElementById('godModal').classList.add('show');
+}
+
+// ---------- 警长竞选 ----------
+function renderSheriff(){
+  const alive=aliveList();
+  let body=`<div class="prompt"><b>🔰 警长竞选</b><br>投票选出警长，警长投票计 2 票。${S.you.alive?'请选择你要支持的玩家：':'（你已出局，旁观竞选）'}</div>`;
+  if(S.you.alive){
+    body+=`<div class="pgrid">${alive.map(t=>pbtn(t,selSheriff===t.id,`selSheriff=${t.id};render();`)).join('')}</div>`;
+    body+=`<div class="foot" style="margin-top:10px"><button class="btn ghost sm" onclick="selSheriff=-1;doSheriff();">弃票</button><button class="btn" ${selSheriff==null?'disabled':''} onclick="doSheriff()">确认投票</button></div>`;
+  } else {
+    body+=`<p class="center muted">等待存活玩家竞选…</p>`;
+  }
+  return `<div class="title-c"><span class="big">🔰</span><div>警长竞选</div></div>${body}`;
+}
+function doSheriff(){ if(selSheriff===undefined||selSheriff===null)return; act('sheriff_vote',{target:selSheriff}); selSheriff=null; }
+
+// ---------- 遗言 ----------
+function renderLastWords(){
+  const myId=me?me.playerId:null;
+  const minePending=S.lastWords && S.lastWords.mine && !(S.lastWords.texts[myId]!==undefined);
+  let body='';
+  if(minePending){
+    body=`<div class="prompt"><b>💬 遗言</b><br>你已出局，留下你的遗言吧。</div>
+      <textarea id="lwText" placeholder="说点什么…" maxlength="200" style="min-height:80px"></textarea>
+      <div class="foot" style="margin-top:10px"><button class="btn" onclick="submitLastWords()">提交遗言</button></div>`;
+  } else if(S.lastWords && S.lastWords.mine){
+    body=`<div class="prompt center">✅ 你的遗言已提交，等待其他玩家…</div>`;
+  } else {
+    const names=(S.lastWords?S.lastWords.speakers.map(s=>s.name):[]).join('、');
+    body=`<div class="prompt center">${escapeHtml(names)} 正在留遗言…<br>请稍候</div>`;
+  }
+  let said='';
+  if(S.lastWords && S.lastWords.texts){
+    const arr=Object.entries(S.lastWords.texts).map(([id,t])=>{const p=S.players.find(x=>x.id===id);return `<div class="lm">💬 ${escapeHtml(p?p.name:'?')}：${escapeHtml(t)}</div>`;});
+    if(arr.length) said=`<div class="logwrap" style="margin-top:10px">${arr.join('')}</div>`;
+  }
+  return `<div class="title-c"><span class="big">💬</span><div>遗言环节</div></div>${body}${said}`;
+}
+function submitLastWords(){ const t=document.getElementById('lwText'); if(t) act('lastwords',{text:t.value.trim()}); }
+
+// ---------- 阶段倒计时（每秒刷新） ----------
+function phaseTimerLabel(){const p=S&&S.phase;if(p==='night')return '🌙 夜晚行动';if(p==='day')return '☀️ 白天讨论';if(p==='vote')return '🗳️ 投票';if(p==='lastwords')return '💬 遗言';if(p==='sheriff')return '🔰 竞选警长';return '';}
+function tickTimer(){
+  const el=document.getElementById('phaseTimer');
+  if(!el)return;
+  if(S&&S.timer&&S.timer.endsAt){
+    const left=Math.max(0,Math.round((S.timer.endsAt-Date.now())/1000));
+    const total=S.timer.total||1;
+    const pct=Math.max(0,Math.min(100,left/total*100));
+    el.style.display='';
+    el.innerHTML=`<div class="tlabel">${phaseTimerLabel()} · 剩余 ${left}s</div><div class="tbar"><div class="tfill" style="width:${pct}%"></div></div>`;
+  } else { el.style.display='none'; }
+}
 
 function renderLobby(){
   const ps=S.players.map(p=>`<span class="pc">${escapeHtml(p.name)}</span>`).join('');
@@ -364,12 +575,7 @@ async function leaveRoom(){
   const isHost=S&&S.you&&S.you.id===S.hostId;
   if(isHost && !confirm('确定要退出并销毁这个房间吗？所有人都将失去连接。'))return;
   try{ await post('/api/leave',{code:me.code,playerId:me.playerId}); }catch(_){}
-  // 断开 SSE，浏览器不会再触发 enterGame/connectSSE
-  if(window._es){ try{window._es.close();}catch(_){ } window._es=null; }
-  S=null; me=null; selTarget=null; selVote=null; selVoteDone=false; wHeal=false; wPoison=null; lastCtx='';
-  document.getElementById('game').classList.remove('active');
-  document.getElementById('home').classList.add('active');
-  document.getElementById('logBtn').style.display='none';
+  goHome();
   toast(isHost?'房间已关闭':'已离开房间');
 }
 
@@ -561,7 +767,7 @@ function renderEnd(){
   const rs=S.players.map(p=>{const d=ROLE_DEFS[p.role];return `<div class="ri"><span class="re">${d.emoji}</span><span style="flex:1">${escapeHtml(p.name)}</span><span class="${p.team==='wolf'?'b-wolf':'b-good'}">${d.name}</span><span class="muted">${p.alive?'存活':'出局'}</span></div>`;}).join('');
   return `<div class="title-c"><div class="codebig" style="font-size:26px;color:${S.result==='good'?'var(--good)':'var(--wolf)'}">${win}</div></div>
     <div class="card"><div class="rolesum">${rs}</div></div>
-    <div class="foot" style="margin-top:12px"><button class="btn" onclick="location.reload()">返回首页</button></div>`;
+    <div class="foot" style="margin-top:12px"><button class="btn" onclick="goHome()">返回首页</button></div>`;
 }
 
 // ---------- chat ----------
@@ -574,9 +780,15 @@ function renderChat(){
 async function sendChat(){const t=document.getElementById('chatText').value.trim();if(!t)return;document.getElementById('chatText').value='';await act('chat',{text:t});}
 
 // ---------- log ----------
-function openLog(){const c=document.getElementById('logContent');c.innerHTML=(S&&S.log)?S.log.slice().reverse().map(m=>`<div class="lm">[第${m.day}轮] ${escapeHtml(m.msg)}</div>`).join(''):'暂无';document.getElementById('logModal').classList.add('show');}
+function   openLog(){const c=document.getElementById('logContent');c.innerHTML=(S&&S.log)?S.log.slice().reverse().map(m=>`<div class="lm">[第${m.day}轮] ${escapeHtml(m.msg)}</div>`).join(''):'暂无';document.getElementById('logModal').classList.add('show');}
 
 buildHome();
+setInterval(tickTimer, 1000); // 阶段倒计时每秒刷新
+// 刷新/重开页面后：若本地留有未结束的房间身份，直接回到原座位（断线重连）
+try{
+  const saved=localStorage.getItem('pg_me');
+  if(saved){ const m=JSON.parse(saved); if(m&&m.code&&m.playerId){ me=m; if(m.mode) currentMode=m.mode; _reconnecting=true; enterGame(); } }
+}catch(_){}
 </script>
 </body>
 </html>

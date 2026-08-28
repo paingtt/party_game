@@ -115,7 +115,7 @@ function kill(room, id, cause) {
   else if (cause === 'hunter') tag = '被猎人开枪';
   else tag = '夜晚被击杀';
   log(room, `${p.name}（${RD[p.role].name}）${tag}。`);
-  if (room.mode === 'werewolf' && p.role === 'hunter' && cause !== 'poison') room.hunter = { pending: true, deadId: id };
+  if (room.mode === 'werewolf' && p.role === 'hunter' && cause !== 'poison') room.hunter = { pending: true, deadId: id, votePath: room.phase === 'vote' };
 }
 
 function checkWin(room) {
@@ -147,6 +147,7 @@ function view(room, pid) {
     id: p.id, name: p.name, alive: p.alive,
     role: (room.phase === 'end') ? p.role : (p.id === pid ? p.role : null),
     isWolf: (room.phase === 'end') ? p.isWolf : (p.id === pid ? p.isWolf : null),
+    sheriff: p.id === room.sheriff,
   }));
   const myAction = buildMyAction(room, me);
   let hunter = null;
@@ -158,6 +159,8 @@ function view(room, pid) {
   return {
     mode: room.mode,
     code: room.code, phase: room.phase, day: room.day, hostId: room.hostId, noJudge: !!room.noJudge,
+    sheriff: room.sheriff || null,
+    timer: room.phaseEndsAt ? { endsAt: room.phaseEndsAt, total: phaseTotal(room) } : null,
     you: { id: me.id, name: me.name, role: me.role, team: me.team, alive: me.alive, isWolf: me.isWolf },
     readyCount: room.ready ? room.ready.size : 0,
     readyTotal: room.players.length,
@@ -176,7 +179,40 @@ function view(room, pid) {
     chat: room.chat.slice(-60),
     log: room.log.slice(-25),
     result: room.phase === 'end' ? room.result : null,
+    godView: (pid === room.hostId) ? buildGodView(room) : null,
+    lastWords: (room.phase === 'lastwords' && room.lastWords) ? {
+      speakers: room.lastWords.speakers.map(id => ({ id, name: nameOf(room, id) })),
+      mine: room.lastWords.speakers.includes(pid),
+      texts: room.lastWords.texts,
+    } : null,
   };
+}
+
+// 裁判（host）上帝视角：汇总全员身份与上一夜行动，供线下查证
+function buildGodView(room) {
+  const players = room.players.map(p => ({ id: p.id, name: p.name, role: p.role, team: p.team, alive: p.alive, isWolf: p.isWolf, connected: p.connected }));
+  let night = null;
+  if (room.night) {
+    const a = room.night;
+    if (room.mode === 'werewolf') {
+      night = {
+        wolfTarget: a.wolfTarget != null ? nameOf(room, a.wolfTarget) : null,
+        guardTarget: a.guardTarget != null ? nameOf(room, a.guardTarget) : null,
+        seer: a.seerTarget != null ? `${nameOf(room, a.seerTarget)} → ${a.seerResult === 'wolf' ? '狼人' : '好人'}` : null,
+        witchHeal: !!a.witchHeal, witchPoison: a.witchPoison != null ? nameOf(room, a.witchPoison) : null,
+      };
+    } else {
+      night = {
+        killerTarget: a.killerTarget != null ? nameOf(room, a.killerTarget) : null,
+        sniperTarget: a.sniperTarget != null ? nameOf(room, a.sniperTarget) : null,
+        doctorTarget: a.doctorTarget != null ? nameOf(room, a.doctorTarget) : null,
+        police: a.policeTarget != null ? `${nameOf(room, a.policeTarget)} → ${a.policeResult === 'wolf' ? '杀手' : '好人'}` : null,
+        butterfly: a.butterflyTarget != null ? nameOf(room, a.butterflyTarget) : null,
+        oldman: a.oldmanTarget != null ? nameOf(room, a.oldmanTarget) : null,
+      };
+    }
+  }
+  return { players, night, sheriff: room.sheriff ? nameOf(room, room.sheriff) : null };
 }
 
 function buildMyAction(room, me) {
@@ -244,9 +280,35 @@ function startGame(room) {
   room.emptyNeedles = {};
   room.terroristBombUsed = false;
   room.silenced = null;
-  startNight(room, true);
+  room.sheriff = null;
+  if (room.mode === 'werewolf') { startSheriff(room); }
+  else { startNight(room, true); }
   log(room, `游戏开始（${M.label}），共 ${room.players.length} 人。`);
   return true;
+}
+
+// 狼人杀：开局先竞选警长（仅 werewolf 模式）
+function startSheriff(room) {
+  room.phase = 'sheriff';
+  room.sheriffVotes = {};
+  room.proceed = new Set();
+  log(room, '进入警长竞选：投票选出警长（🔰）。');
+  setPhaseTimer(room, SHERIFF_DURATION, () => resolveSheriff(room));
+  broadcast(room);
+}
+function resolveSheriff(room) {
+  if (room.phase !== 'sheriff') return;
+  const tally = {};
+  Object.values(room.sheriffVotes).forEach(t => { if (t && t !== -1) tally[t] = (tally[t] || 0) + 1; });
+  let max = -1, winners = [];
+  Object.keys(tally).forEach(k => { const v = tally[k]; if (v > max) { max = v; winners = [k]; } else if (v === max) winners.push(k); });
+  let elected = null;
+  if (winners.length === 0) { const al = alivePlayers(room); elected = al.length ? al[Math.floor(Math.random() * al.length)].id : null; log(room, '警长竞选弃票，随机产生警长。'); }
+  else if (winners.length > 1) { elected = winners[Math.floor(Math.random() * winners.length)]; log(room, `警长竞选平票，随机任命 ${nameOf(room, elected)} 为警长。`); }
+  else { elected = winners[0]; log(room, `${nameOf(room, elected)} 当选警长（🔰）。`); }
+  room.sheriff = elected;
+  clearPhaseTimer(room);
+  startNight(room, true);
 }
 
 // 无法官模式：所有玩家都准备且人数符合配置时自动开局
@@ -278,6 +340,7 @@ function startNight(room, first) {
   room.silenced = null;
   resetNight(room);
   room.night.stepAt = Date.now();
+  room.phaseEndsAt = room.night.stepAt + NIGHT_STEP_TIMEOUT;
   log(room, `第 ${room.day} 夜降临。`);
   skipUnrunnable(room);
   broadcast(room);
@@ -290,11 +353,35 @@ function advanceNight(room) {
   if (a.step >= a.steps.length) { resolveNight(room); return; }
   skipUnrunnable(room);
   a.stepAt = Date.now();
+  room.phaseEndsAt = a.stepAt + NIGHT_STEP_TIMEOUT;
   broadcast(room);
 }
 
 // 无法官模式：夜晚某步的在线角色长时间不操作，超时自动跳过该步，避免全场卡死
 const NIGHT_STEP_TIMEOUT = 45000;
+const DAY_DURATION = 180000;       // 白天讨论时长
+const VOTE_DURATION = 60000;       // 投票时长
+const LASTWORDS_DURATION = 30000;  // 遗言时长
+const SHERIFF_DURATION = 60000;    // 警长竞选时长
+
+// 阶段倒计时：server 设定 deadline，前端据此实时读秒；到点由对应回调自动推进
+function setPhaseTimer(room, ms, cb) {
+  if (room._timer) { clearTimeout(room._timer); room._timer = null; }
+  room.phaseEndsAt = Date.now() + ms;
+  room._timer = setTimeout(() => { room._timer = null; room.phaseEndsAt = null; cb(); }, ms);
+}
+function clearPhaseTimer(room) {
+  if (room._timer) { clearTimeout(room._timer); room._timer = null; }
+  room.phaseEndsAt = null;
+}
+function phaseTotal(room) {
+  if (room.phase === 'night') return NIGHT_STEP_TIMEOUT;
+  if (room.phase === 'day') return DAY_DURATION;
+  if (room.phase === 'vote') return VOTE_DURATION;
+  if (room.phase === 'lastwords') return LASTWORDS_DURATION;
+  if (room.phase === 'sheriff') return SHERIFF_DURATION;
+  return 1;
+}
 function checkNightTimeouts() {
   const now = Date.now();
   rooms.forEach(room => {
@@ -367,13 +454,8 @@ function resolveNightWerewolf(room) {
   room.lastDeaths = deaths.map(d => ({ name: nameOf(room, d.id), role: MODES.werewolf.roles[room.players.find(p => p.id === d.id).role].name }));
   deaths.forEach(d => kill(room, d.id, d.cause));
   room.guardLast = a.guardTarget;
-  room.phase = 'day';
-  room.proceed = new Set();
   log(room, '天亮了。');
-  if (room.hunter && room.hunter.pending) { room.phase = 'hunter'; broadcast(room); return; }
-  const w = checkWin(room);
-  if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '狼人阵营胜利！'); broadcast(room); return; }
-  broadcast(room);
+  afterNight(room);
 }
 
 function resolveNightKillgame(room) {
@@ -409,12 +491,46 @@ function resolveNightKillgame(room) {
 
   room.lastDeaths = Array.from(deaths.keys()).map(id => ({ name: nameOf(room, id), role: RD[room.players.find(p => p.id === id).role].name }));
   deaths.forEach((cause, id) => kill(room, id, cause));
+  log(room, '天亮了。');
+  afterNight(room);
+}
+
+// 夜晚结束后统一收口：先判胜负，再处理猎人，最后进入白天
+function afterNight(room) {
+  const w = checkWin(room);
+  if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '狼人阵营胜利！'); clearPhaseTimer(room); broadcast(room); return; }
+  if (room.hunter && room.hunter.pending) { room.phase = 'hunter'; clearPhaseTimer(room); broadcast(room); return; }
+  enterDay(room);
+}
+// 进入白天讨论阶段（带倒计时，到点自动进入投票）
+function enterDay(room) {
   room.phase = 'day';
   room.proceed = new Set();
-  log(room, '天亮了。');
-  const w = checkWin(room);
-  if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '杀手阵营胜利！'); }
+  setPhaseTimer(room, DAY_DURATION, () => { if (room.phase === 'day') { log(room, '讨论时间到，进入投票。'); startVote(room); } });
   broadcast(room);
+}
+// 遗言环节：被放逐者发言，到点或全员发完自动继续
+function enterLastWords(room, onDone, deadIds) {
+  room.phase = 'lastwords';
+  room.lastWords = { speakers: deadIds, texts: {}, onDone };
+  room.proceed = new Set();
+  setPhaseTimer(room, LASTWORDS_DURATION, () => finishLastWords(room));
+  log(room, `${deadIds.map(id => nameOf(room, id)).join('、')} 出局，进入遗言环节。`);
+  broadcast(room);
+}
+function finishLastWords(room) {
+  clearPhaseTimer(room);
+  const cb = (room.lastWords && room.lastWords.onDone) ? room.lastWords.onDone : null;
+  room.lastWords = null;
+  if (cb) cb();
+}
+// 投票放逐后的收口：判胜负 / 猎人 / 进入下一夜
+function afterVoteCont(room) {
+  const w = checkWin(room);
+  if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '狼人阵营胜利！'); clearPhaseTimer(room); broadcast(room); return; }
+  if (room.mode === 'werewolf' && room.hunter && room.hunter.pending) { room.phase = 'hunter'; clearPhaseTimer(room); broadcast(room); return; }
+  room.day++;
+  startNight(room, false);
 }
 
 function startVote(room) {
@@ -422,13 +538,19 @@ function startVote(room) {
   room.phase = 'vote';
   room.proceed = new Set();
   room.votes = {};
+  setPhaseTimer(room, VOTE_DURATION, () => { if (room.phase === 'vote') finishVote(room); });
   log(room, '进入投票环节。');
   broadcast(room);
 }
 
 function finishVote(room) {
+  // 警长投票计 2 票
   const tally = {};
-  Object.values(room.votes).forEach(t => { if (t !== -1 && t !== '-1') tally[t] = (tally[t] || 0) + 1; });
+  Object.entries(room.votes).forEach(([voter, t]) => {
+    if (t === -1 || t === '-1') return;
+    const weight = (voter === room.sheriff) ? 2 : 1;
+    tally[t] = (tally[t] || 0) + weight;
+  });
   let max = -1, winners = [];
   Object.keys(tally).forEach(k => { const v = tally[k]; if (v > max) { max = v; winners = [k]; } else if (v === max) winners.push(k); });
   let eliminated = null;
@@ -437,8 +559,8 @@ function finishVote(room) {
   else { eliminated = winners[0]; log(room, `投票结果：${nameOf(room, eliminated)} 以 ${max} 票被放逐。`); }
   if (eliminated != null) kill(room, eliminated, 'vote');
   room.votes = {};
-  if (room.mode === 'werewolf' && room.hunter && room.hunter.pending) { room.phase = 'hunter'; broadcast(room); return; }
-  afterVote(room);
+  if (eliminated != null) enterLastWords(room, () => afterVoteCont(room), [eliminated]);
+  else afterVoteCont(room);
 }
 
 function maybeFinishVote(room) {
@@ -447,13 +569,6 @@ function maybeFinishVote(room) {
   const allConnectedVoted = connectedAlive.length > 0 && connectedAlive.every(p => room.votes[p.id] !== undefined);
   if (connectedAlive.length === 0 || allConnectedVoted) finishVote(room);
   else broadcast(room);
-}
-
-function afterVote(room) {
-  const w = checkWin(room);
-  if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : (room.mode === 'werewolf' ? '狼人阵营胜利！' : '杀手阵营胜利！')); broadcast(room); return; }
-  room.day++;
-  startNight(room, false);
 }
 
 // ---------- HTTP ----------
@@ -496,8 +611,12 @@ const server = http.createServer((req, res) => {
       let data; try { data = JSON.parse(body || '{}'); } catch (e) { data = {}; }
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       const out = handleApi(url, data);
-      res.end(JSON.stringify(out));
-      if (out && out._broadcast && out._room) { broadcast(out._room); }
+      // 客户端 JSON 不得包含内部字段（_room 内含定时器对象，JSON.stringify 会因循环引用崩溃）
+      const clean = {};
+      for (const k of Object.keys(out || {})) { if (!k.startsWith('_')) clean[k] = out[k]; }
+      const doBroadcast = !!(out && out._broadcast && out._room);
+      res.end(JSON.stringify(clean));
+      if (doBroadcast) broadcast(out._room);
     });
     return;
   }
@@ -522,6 +641,7 @@ function handleApi(url, data) {
         players: [{ id: hostId, name: (data.name || (data.noJudge ? '玩家' : '法官')).slice(0, 12), role: null, team: null, isWolf: false, alive: true, connected: true }],
         roleConfig: cfg, night: null, votes: {}, chat: [], log: [], result: null, lastDeaths: [], clients: new Map(),
         emptyNeedles: {}, terroristBombUsed: false, silenced: null,
+        sheriff: null, lastWords: null, _timer: null, phaseEndsAt: null,
       };
       if (mode === 'werewolf') { room.witch = { heal: true, poison: true }; room.guardLast = null; room.hunter = null; }
       rooms.set(code, room);
@@ -622,6 +742,26 @@ function handleApi(url, data) {
         log(room, '法官强制结束投票并结算。');
         finishVote(room);
         return { ok: true, _broadcast: true, _room: room };
+      }
+      if (type === 'sheriff_vote') {
+        if (room.phase !== 'sheriff') return { ok: false, error: '当前不是竞选阶段' };
+        if (!me.alive) return { ok: false, error: '你已出局' };
+        room.sheriffVotes[pid] = (data.target != null) ? data.target : -1;
+        const alive = alivePlayers(room);
+        if (alive.every(p => room.sheriffVotes[p.id] !== undefined)) resolveSheriff(room);
+        else broadcast(room);
+        return { ok: true, _broadcast: room.phase === 'sheriff' ? false : true, _room: room };
+      }
+      if (type === 'lastwords') {
+        if (room.phase !== 'lastwords' || !room.lastWords) return { ok: false, error: '当前不是遗言环节' };
+        if (!room.lastWords.speakers.includes(pid)) return { ok: false, error: '你无需留遗言' };
+        const text = (data.text || '').toString().slice(0, 200);
+        room.lastWords.texts[pid] = text;
+        room.chat.push({ name: me.name, text: '💬 遗言：' + text, ts: Date.now() });
+        const all = room.lastWords.speakers.every(id => room.lastWords.texts[id] !== undefined);
+        if (all) finishLastWords(room);
+        else broadcast(room);
+        return { ok: true, _broadcast: room.phase === 'lastwords' ? false : true, _room: room };
       }
       if (type === 'terrorist_bomb') {
         if (room.mode !== 'killgame') return { ok: false, error: '无效操作' };
@@ -742,10 +882,12 @@ function handleApi(url, data) {
       if (room.phase === 'hunter' && room.mode === 'werewolf' && room.hunter && room.hunter.pending && me.id === room.hunter.deadId && type === 'hunter_shoot') {
         const t = data.target != null ? data.target : null;
         if (t != null) { const tp = room.players.find(p => p.id === t); if (!tp || !tp.alive) return { ok: false, error: '无效目标' }; kill(room, t, 'hunter'); }
+        const vp = room.hunter ? room.hunter.votePath : false;
         room.hunter = null;
         const w = checkWin(room);
-        if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '狼人阵营胜利！'); }
-        else { room.phase = 'day'; room.proceed = new Set(); }
+        if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '狼人阵营胜利！'); clearPhaseTimer(room); broadcast(room); return { ok: true, _broadcast: true, _room: room }; }
+        if (vp) { room.day++; startNight(room, false); }
+        else enterDay(room);
         return { ok: true, _broadcast: true, _room: room };
       }
       return { ok: false, error: '无效操作' };
