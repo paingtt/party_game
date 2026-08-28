@@ -917,8 +917,8 @@ function handleApi(url, data) {
   }
 }
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`聚会桌游(联网版) 已启动: http://localhost:${PORT}  (bind 0.0.0.0, PORT=${PORT})`);
+server.listen(PORT, () => {
+  console.log(`聚会桌游(联网版) 已启动: http://localhost:${PORT}  (双栈监听, PORT=${PORT})`);
 });
 
 setInterval(checkNightTimeouts, 5000);
