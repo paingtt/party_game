@@ -51,6 +51,34 @@ const MODES = {
     },
     minPlayers: 6, minWolves: 1,
   },
+  botc: {
+    label: '血染钟楼',
+    roles: {
+      demon:          { name: '恶魔', emoji: '💀', team: 'wolf' },
+      minion:         { name: '爪牙', emoji: '🤝', team: 'wolf' },
+      fortune_teller: { name: '占卜师', emoji: '🔮', team: 'good' },
+      undertaker:     { name: '送葬者', emoji: '⚰️', team: 'good' },
+      monk:           { name: '僧侣', emoji: '🧘', team: 'good' },
+      ravenkeeper:    { name: '守鸦人', emoji: '🦅', team: 'good' },
+      virgin:         { name: '圣处女', emoji: '🕊️', team: 'good' },
+      chambermaid:    { name: '女佣', emoji: '🛏️', team: 'good' },
+      empath:         { name: '共情者', emoji: '💗', team: 'good' },
+      washerwoman:    { name: '洗衣妇', emoji: '🧺', team: 'good' },
+      investigator:   { name: '调查员', emoji: '🔍', team: 'good' },
+      saint:          { name: '圣女', emoji: '👼', team: 'good' },
+      slayer:         { name: '决斗者', emoji: '⚔️', team: 'good' },
+      soldier:        { name: '士兵', emoji: '🛡️', team: 'good' },
+      mayor:          { name: '市长', emoji: '🎩', team: 'good' },
+      chef:           { name: '厨子', emoji: '🍳', team: 'good' },
+      librarian:      { name: '图书管理员', emoji: '📚', team: 'good' },
+      drunk:          { name: '酒鬼', emoji: '🍺', team: 'good' },
+      recluse:        { name: '隐士', emoji: '🏠', team: 'good' },
+      butler:         { name: '管家', emoji: '🤵', team: 'good' },
+    },
+    roleOrder: ['demon', 'minion', 'fortune_teller', 'undertaker', 'monk', 'ravenkeeper', 'virgin', 'chambermaid', 'empath', 'washerwoman', 'investigator', 'saint', 'slayer', 'soldier', 'mayor', 'chef', 'librarian', 'drunk', 'recluse', 'butler'],
+    presets: {},
+    minPlayers: 5, minWolves: 1,
+  },
 };
 
 const rooms = new Map(); // code -> room
@@ -82,6 +110,8 @@ function buildNightSteps(room) {
     if (room.players.some(p => p.role === 'guard' && p.alive)) steps.push('guard');
     if (room.players.some(p => p.role === 'seer' && p.alive)) steps.push('seer');
     if (room.players.some(p => p.role === 'witch' && p.alive)) steps.push('witch');
+  } else if (room.mode === 'botc') {
+    steps.push('storyteller');
   } else {
     if (room.players.some(p => p.role === 'butterfly' && p.alive)) steps.push('butterfly');
     if (room.players.some(p => p.role === 'sniper' && p.alive)) steps.push('sniper');
@@ -95,6 +125,7 @@ function buildNightSteps(room) {
 const STEP_NAME = {
   werewolf: { wolf: '狼人行动', guard: '守卫行动', seer: '预言家查验', witch: '女巫行动' },
   killgame: { butterfly: '花蝴蝶护体', sniper: '狙击手狙击', killer: '杀手杀人', doctor: '医生救治', police: '警察指认', oldman: '森林老人禁言' },
+  botc: { storyteller: '说书人结算' },
 };
 
 function log(room, msg) {
@@ -113,14 +144,23 @@ function kill(room, id, cause) {
   else if (cause === 'linked') tag = '与花蝴蝶同归于尽';
   else if (cause === 'vote') tag = '被投票放逐';
   else if (cause === 'hunter') tag = '被猎人开枪';
+  else if (cause === 'execution') tag = '被处决';
   else tag = '夜晚被击杀';
   log(room, `${p.name}（${RD[p.role].name}）${tag}。`);
   if (room.mode === 'werewolf' && p.role === 'hunter' && cause !== 'poison') room.hunter = { pending: true, deadId: id, votePath: room.phase === 'vote' };
 }
 
 function checkWin(room) {
+  if (room.mode === 'botc') return checkWinBotc(room);
   if (room.mode === 'werewolf') return checkWinWerewolf(room);
   return checkWinKillgame(room);
+}
+function checkWinBotc(room) {
+  const demons = room.players.filter(p => p.role === 'demon' && p.alive).length;
+  const good = room.players.filter(p => p.team === 'good' && p.alive).length;
+  if (demons === 0) return 'good';
+  if (good <= demons) return 'wolf';
+  return null;
 }
 function checkWinWerewolf(room) {
   const wolves = room.players.filter(p => p.isWolf && p.alive).length;
@@ -143,12 +183,16 @@ function view(room, pid) {
   const me = room.players.find(p => p.id === pid);
   if (!me) return { error: 'not_found' };
   const RD = MODES[room.mode].roles;
-  const players = room.players.map(p => ({
-    id: p.id, name: p.name, alive: p.alive,
-    role: (room.phase === 'end') ? p.role : (p.id === pid ? p.role : null),
-    isWolf: (room.phase === 'end') ? p.isWolf : (p.id === pid ? p.isWolf : null),
-    sheriff: p.id === room.sheriff,
-  }));
+  const wolfVisible = (room.mode === 'botc' && me.team === 'wolf');
+  const players = room.players.map(p => {
+    const reveal = (room.phase === 'end') || (p.id === pid) || (wolfVisible && p.team === 'wolf');
+    return {
+      id: p.id, name: p.name, alive: p.alive,
+      role: reveal ? p.role : null,
+      isWolf: reveal ? p.isWolf : null,
+      sheriff: p.id === room.sheriff,
+    };
+  });
   const myAction = buildMyAction(room, me);
   let hunter = null;
   if (room.mode === 'werewolf' && room.phase === 'hunter' && room.hunter && room.hunter.pending) {
@@ -203,6 +247,8 @@ function buildGodView(room) {
         seer: a.seerTarget != null ? `${nameOf(room, a.seerTarget)} → ${a.seerResult === 'wolf' ? '狼人' : '好人'}` : null,
         witchHeal: !!a.witchHeal, witchPoison: a.witchPoison != null ? nameOf(room, a.witchPoison) : null,
       };
+    } else if (room.mode === 'botc') {
+      night = { note: '说书人手动结算，请在「裁判总览」标记本夜死亡者' };
     } else {
       night = {
         killerTarget: a.killerTarget != null ? nameOf(room, a.killerTarget) : null,
@@ -340,6 +386,13 @@ function startNight(room, first) {
   room.proceed = new Set();
   room.lastDeaths = [];
   room.silenced = null;
+  if (room.mode === 'botc') {
+    room.night = { steps: ['storyteller'], step: 0 };
+    room.phaseEndsAt = null;
+    log(room, `第 ${room.day} 夜降临（血染钟楼：说书人手动结算）。`);
+    broadcast(room);
+    return;
+  }
   resetNight(room);
   room.night.stepAt = Date.now();
   room.phaseEndsAt = room.night.stepAt + NIGHT_STEP_TIMEOUT;
@@ -387,6 +440,7 @@ function phaseTotal(room) {
 function checkNightTimeouts() {
   const now = Date.now();
   rooms.forEach(room => {
+    if (room.mode === 'botc') return;
     if (room.phase === 'night' && room.night && room.night.stepAt && now - room.night.stepAt > NIGHT_STEP_TIMEOUT) {
       if (stepActorConnected(room)) {
         log(room, `步骤超时（${STEP_NAME[room.mode][room.night.steps[room.night.step]] || '当前步骤'}），自动跳过。`);
@@ -401,6 +455,7 @@ function checkNightTimeouts() {
 
 // 当前夜晚步骤是否有「在线且存活」的角色可以操作
 function stepActorConnected(room) {
+  if (room.mode === 'botc') return false;
   const a = room.night;
   if (!a || a.step >= a.steps.length) return false;
   const step = a.steps[a.step];
@@ -438,8 +493,14 @@ function skipUnrunnable(room) {
 }
 
 function resolveNight(room) {
+  if (room.mode === 'botc') return resolveNightBotc(room);
   if (room.mode === 'werewolf') return resolveNightWerewolf(room);
   return resolveNightKillgame(room);
+}
+function resolveNightBotc(room) {
+  room.lastDeaths = [];
+  log(room, '天亮了。');
+  afterNight(room);
 }
 
 function resolveNightWerewolf(room) {
@@ -559,8 +620,9 @@ function finishVote(room) {
   if (winners.length === 0) log(room, '投票平票/弃票，无人出局。');
   else if (winners.length > 1) { eliminated = winners[Math.floor(Math.random() * winners.length)]; log(room, `票型平局，随机淘汰 ${nameOf(room, eliminated)}。`); }
   else { eliminated = winners[0]; log(room, `投票结果：${nameOf(room, eliminated)} 以 ${max} 票被放逐。`); }
-  if (eliminated != null) kill(room, eliminated, 'vote');
+  if (eliminated != null) kill(room, eliminated, room.mode === 'botc' ? 'execution' : 'vote');
   room.votes = {};
+  if (room.mode === 'botc') { afterVoteCont(room); return; }
   if (eliminated != null) enterLastWords(room, () => afterVoteCont(room), [eliminated]);
   else afterVoteCont(room);
 }
@@ -798,6 +860,19 @@ function handleApi(url, data) {
         log(room, `恐怖分子引爆，与 ${tp.name} 同归于尽。`);
         const w = checkWin(room);
         if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '杀手阵营胜利！'); }
+        return { ok: true, _broadcast: true, _room: room };
+      }
+      if (type === 'botc_night_end') {
+        if (room.phase !== 'night') return { ok: false, error: '当前不是夜晚' };
+        if (pid !== room.hostId) return { ok: false, error: '只有说书人能结算夜晚' };
+        const deaths = Array.isArray(data.deaths) ? data.deaths.filter(id => room.players.some(p => p.id === id && p.alive)) : [];
+        const info = [];
+        for (const id of deaths) { const p = room.players.find(x => x.id === id); if (p && p.alive) { kill(room, id, 'night'); info.push({ name: p.name, role: MODES.botc.roles[p.role].name }); } }
+        room.lastDeaths = info;
+        clearPhaseTimer(room);
+        const w = checkWin(room);
+        if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '善良阵营胜利！' : '恶魔阵营胜利！'); clearPhaseTimer(room); broadcast(room); return { ok: true, _broadcast: true, _room: room }; }
+        afterNight(room);
         return { ok: true, _broadcast: true, _room: room };
       }
       if (room.phase === 'night') {

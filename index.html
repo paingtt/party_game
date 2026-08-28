@@ -114,6 +114,8 @@
   .godview .gact .gbtn.ghost{background:transparent;color:var(--sub);border:1px solid var(--line);}
   .godview .gact .gmuted{font-size:11px;color:var(--sub);margin-top:4px;line-height:1.5;}
   .lobbyfill{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px;flex-wrap:wrap;}
+  .grow-item{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:13px;cursor:pointer;}
+  .grow-item input{width:auto;}
 </style>
 </head>
 <body>
@@ -141,11 +143,13 @@
         <div class="label">快速预设</div>
         <div class="presets" id="presets"></div>
       </div>
-      <div class="field">
-        <div class="label"><span>角色配置</span><span id="presetHint"></span></div>
+      <div class="field" id="cfgField">
+        <div class="label" id="cfgLabel"><span>角色配置</span><span id="presetHint"></span></div>
         <div id="steppers"></div>
+        <div id="botcSizes" class="presets" style="display:none"></div>
+        <div id="botcSummary" class="muted" style="display:none;margin:6px 0;font-size:13px"></div>
       </div>
-      <div class="total"><span>总人数</span><b id="totalCount">6</b></div>
+      <div class="total" id="totalWrap"><span>总人数</span><b id="totalCount">6</b></div>
       <label class="field" style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--sub);cursor:pointer">
         <input type="checkbox" id="noJudge" style="width:auto"> 无需法官（全员准备后自动开局，过半玩家确认即推进）
       </label>
@@ -265,6 +269,34 @@ const MODES = {
       '12人':{killer:3,sniper:1,terrorist:1,police:2,doctor:1,butterfly:1,oldman:1,civilian:2},
     },
   },
+  botc: {
+    label: '血染钟楼',
+    roles: {
+      demon:{name:'恶魔',emoji:'💀',team:'wolf'},
+      minion:{name:'爪牙',emoji:'🤝',team:'wolf'},
+      fortune_teller:{name:'占卜师',emoji:'🔮',team:'good'},
+      undertaker:{name:'送葬者',emoji:'⚰️',team:'good'},
+      monk:{name:'僧侣',emoji:'🧘',team:'good'},
+      ravenkeeper:{name:'守鸦人',emoji:'🦅',team:'good'},
+      virgin:{name:'圣处女',emoji:'🕊️',team:'good'},
+      chambermaid:{name:'女佣',emoji:'🛏️',team:'good'},
+      empath:{name:'共情者',emoji:'💗',team:'good'},
+      washerwoman:{name:'洗衣妇',emoji:'🧺',team:'good'},
+      investigator:{name:'调查员',emoji:'🔍',team:'good'},
+      saint:{name:'圣女',emoji:'👼',team:'good'},
+      slayer:{name:'决斗者',emoji:'⚔️',team:'good'},
+      soldier:{name:'士兵',emoji:'🛡️',team:'good'},
+      mayor:{name:'市长',emoji:'🎩',team:'good'},
+      chef:{name:'厨子',emoji:'🍳',team:'good'},
+      librarian:{name:'图书管理员',emoji:'📚',team:'good'},
+      drunk:{name:'酒鬼',emoji:'🍺',team:'good'},
+      recluse:{name:'隐士',emoji:'🏠',team:'good'},
+      butler:{name:'管家',emoji:'🤵',team:'good'},
+    },
+    roleOrder: ['demon','minion','fortune_teller','undertaker','monk','ravenkeeper','virgin','chambermaid','empath','washerwoman','investigator','saint','slayer','soldier','mayor','chef','librarian','drunk','recluse','butler'],
+    presets: {},
+    minPlayers: 5, minWolves: 1,
+  },
 };
 let currentMode='werewolf';
 let currentPreset='6人';
@@ -274,6 +306,17 @@ let S=null; // latest view
 let selTarget=null, selVote=null, selVoteDone=false, wHeal=false, wPoison=null, lastCtx='';
 let _reconnecting=false, _firstMsgTimer=null, _sseErrors=0; // 断线自动重连状态
 let selSheriff=null, roleCardShown=false; // 警长竞选选择 / 角色卡是否已自动弹过
+let botcRoleConfig=null, botcSize=0; // 血染钟楼：按人数随机生成的角色配置
+const BOTC_TOWNSFOLK=['fortune_teller','undertaker','monk','ravenkeeper','virgin','chambermaid','empath','washerwoman','investigator','saint','slayer','soldier','mayor','chef','librarian'];
+const BOTC_OUTSIDERS=['drunk','recluse','butler'];
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+function botcGenRoles(k){
+  const good=k-2, outsiderCount=Math.min(3,Math.max(1,Math.floor((k-5)/2)+1)), townCount=good-outsiderCount;
+  const cfg={demon:1,minion:1};
+  shuffle(BOTC_TOWNSFOLK.slice()).slice(0,townCount).forEach(r=>cfg[r]=(cfg[r]||0)+1);
+  shuffle(BOTC_OUTSIDERS.slice()).slice(0,outsiderCount).forEach(r=>cfg[r]=(cfg[r]||0)+1);
+  return cfg;
+}
 
 // 角色技能说明（新手速查）
 const ROLE_DESC = {
@@ -294,6 +337,28 @@ const ROLE_DESC = {
     butterfly: '好人阵营。每晚护体一人，被护者免疫当晚致死；若花蝴蝶本人死亡，被护者同死。',
     oldman: '好人阵营。每晚禁言一人，其次日白天不能发言。',
     civilian: '好人阵营。无特殊能力，靠发言与投票找出杀手。',
+  },
+  botc: {
+    demon: '恶魔阵营（邪恶）。每晚可击杀一名玩家。恶魔死亡时若善良未触发失败条件，善良获胜。',
+    minion: '恶魔阵营（邪恶）。知道谁是恶魔，与恶魔私下商量并保护其存活；恶魔不会误杀爪牙。',
+    fortune_teller: '善良阵营。每晚选择两名玩家，得知其中是否有恶魔（可能得到假象，如隐士）。',
+    undertaker: '善良阵营。每当有玩家在夜间死亡后，你得知该玩家的真实角色。',
+    monk: '善良阵营。每晚守护一名玩家，被守护者当晚免疫恶魔击杀。',
+    ravenkeeper: '善良阵营。当你死亡时（无论夜晚或处决），可选择一名存活玩家，得知其角色。',
+    virgin: '善良阵营。若你被提名且无人反对，则提名者立即死亡。',
+    chambermaid: '善良阵营。每晚选择两名玩家，得知他们昨夜是否采取了行动。',
+    empath: '善良阵营。每晚得知与你相邻的两名玩家中有几个是善良的。',
+    washerwoman: '善良阵营。开局得知「某角色」在两名玩家中之一。',
+    investigator: '善良阵营。开局得知某个「局外人」角色在两名玩家中之一。',
+    saint: '善良阵营。若你被处决，善良阵营立即失败（除非你是酒鬼等特殊情况）。',
+    slayer: '善良阵营。白天可指认一名玩家为恶魔（每局限一次），指认正确则该玩家死亡。',
+    soldier: '善良阵营。免疫恶魔击杀（除非醉酒或中毒）。',
+    mayor: '善良阵营。处决时你的票算三票；若你被处决，善良阵营失败。',
+    chef: '善良阵营。开局得知第一夜会有几名玩家死亡（0/1/2）。',
+    librarian: '善良阵营。开局得知某个「局外人」角色在两名玩家中之一。',
+    drunk: '善良阵营（醉酒）。你以为自己是某个其他角色，实际你不是——你的真实角色由说书人私下告知。',
+    recluse: '善良阵营（局外人）。你可能被当作恶魔：被击杀、被查验时可能显示为恶魔。',
+    butler: '善良阵营（局外人）。每晚必须遵从「主人」的指令行动，主人由说书人指定。',
   },
 };
 
@@ -317,7 +382,32 @@ function buildHome(){
       <div class="step-ctrl"><button onclick="step('${r}',-1)">−</button><span class="num" id="num_${r}">0</span><button onclick="step('${r}',1)">+</button></div>`;
     sc.appendChild(row);
   });
-  applyPreset(currentPreset);
+  // 血染钟楼：隐藏通用步进器，改用「选择人数」生成随机角色配置
+  if(currentMode==='botc'){
+    ['presets','steppers','totalWrap','cfgLabel'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
+    document.getElementById('botcSizes').style.display='';
+    document.getElementById('botcSummary').style.display='';
+    renderBotcSizes();
+  }else{
+    applyPreset(currentPreset);
+    ['presets','steppers','totalWrap','cfgLabel'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='';});
+    document.getElementById('botcSizes').style.display='none';
+    document.getElementById('botcSummary').style.display='none';
+  }
+}
+function renderBotcSizes(){
+  const wrap=document.getElementById('botcSizes'); wrap.innerHTML='';
+  [5,6,7,8,9,10,11,12].forEach(k=>{
+    const b=document.createElement('div'); b.className='chip'+(k===botcSize?' on':''); b.textContent=k+'人';
+    b.onclick=()=>botcSelectSize(k); wrap.appendChild(b);
+  });
+  if(!botcSize) document.getElementById('botcSummary').textContent='选择人数后，将随机为你分配恶魔/爪牙与城镇角色（具体身份开局揭晓）。';
+}
+function botcSelectSize(k){
+  botcSize=k; botcRoleConfig=botcGenRoles(k);
+  const outs=Math.min(3,Math.max(1,Math.floor((k-5)/2)+1));
+  document.getElementById('botcSummary').textContent=`已选 ${k} 人：将随机分配 1 恶魔 · 1 爪牙 · ${k-2} 名善良角色（其中约 ${outs} 名「局外人」）。具体身份开局揭晓。`;
+  renderBotcSizes();
 }
 function applyPreset(k){const p=MODES[currentMode].presets[k];MODES[currentMode].roleOrder.forEach(r=>document.getElementById('num_'+r).textContent=p[r]||0);currentPreset=k;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.toggle('on',c.textContent===k));document.getElementById('presetHint').textContent='';updateTotal();}
 function step(r,d){const el=document.getElementById('num_'+r);let v=parseInt(el.textContent)+d;if(v<0)v=0;if(v>20)v=20;el.textContent=v;currentPreset=null;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.remove('on'));document.getElementById('presetHint').textContent='自定义';updateTotal();}
@@ -326,7 +416,14 @@ function getRoles(){const o={};MODES[currentMode].roleOrder.forEach(r=>o[r]=pars
 
 async function createRoom(){
   const name=(document.getElementById('homeName').value||'法官').trim();
-  const roles=getRoles();let total=0;MODES[currentMode].roleOrder.forEach(r=>total+=roles[r]);
+  let roles;
+  if(currentMode==='botc'){
+    if(!botcRoleConfig){toast('请先选择血染钟楼人数');return;}
+    roles=botcRoleConfig;
+  }else{
+    roles=getRoles();
+  }
+  let total=0;MODES[currentMode].roleOrder.forEach(r=>total+=roles[r]);
   if(total<MODES[currentMode].minPlayers){toast('至少需要 '+MODES[currentMode].minPlayers+' 人');return;}
   const wolves=MODES[currentMode].roleOrder.filter(r=>MODES[currentMode].roles[r].team==='wolf').reduce((s,r)=>s+roles[r],0);
   if(wolves<1){toast('至少 1 名杀手/狼人');return;}
@@ -407,7 +504,7 @@ function render(){
   if(S.phase!=='lobby' && S.you.role && !roleCardShown){ roleCardShown=true; showRoleCard(); }
   const stage=document.getElementById('stage');
   if(S.phase==='lobby') stage.innerHTML=renderLobby();
-  else if(S.phase==='night') stage.innerHTML=(S.mode==='killgame')?renderNightKill():renderNightWolf();
+  else if(S.phase==='night') stage.innerHTML=(S.mode==='botc')?renderNightBotc():(S.mode==='killgame')?renderNightKill():renderNightWolf();
   else if(S.phase==='sheriff') stage.innerHTML=renderSheriff();
   else if(S.phase==='day') stage.innerHTML=renderDay();
   else if(S.phase==='vote') stage.innerHTML=renderVote();
@@ -431,7 +528,7 @@ function renderMe(){
   const emo = S.you.role? d.emoji : '❓';
   const rname = S.you.role? d.name : '未分配';
   const team = S.you.team==='wolf'?'b-wolf':'b-good';
-  const teamTxt = S.you.team==='wolf'?(S.mode==='killgame'?'杀手阵营':'狼人阵营'):'好人阵营';
+  const teamTxt = S.you.team==='wolf'?(S.mode==='botc'?'恶魔阵营':(S.mode==='killgame'?'杀手阵营':'狼人阵营')):'好人阵营';
   document.getElementById('meBar').innerHTML=`
     <div class="av">${emo}</div>
     <div><div class="mt">${S.you.name} · 房间 ${S.code}</div><div class="mn">${rname}${S.you.alive?'':' · 已出局'}</div></div>
@@ -440,7 +537,7 @@ function renderMe(){
 }
 function aliveList(){return S.players.filter(p=>p.alive);}
 function pbtn(p,sel,onClick,disabled){
-  const rd = ROLE_DEFS[p.role] || (currentMode==='killgame'?MODES.killgame.roles.civilian:MODES.werewolf.roles.villager);
+  const rd = ROLE_DEFS[p.role] || (currentMode==='botc'?MODES.botc.roles.demon:(currentMode==='killgame'?MODES.killgame.roles.civilian:MODES.werewolf.roles.villager));
   const sh = p.sheriff ? '<div class="tag" style="color:var(--warn)">🔰</div>' : '';
   return `<div class="pbtn ${sel?'sel':''} ${disabled?'dead':''}" ${onClick?`onclick="${onClick}"`:''}>
     <div class="pemoji">${rd.emoji}</div>
@@ -455,7 +552,7 @@ function showRoleCard(){
   document.getElementById('rcEmoji').textContent=d.emoji;
   document.getElementById('rcName').textContent=d.name;
   const isWolf=S.you.team==='wolf';
-  const teamTxt=isWolf?(S.mode==='killgame'?'杀手阵营':'狼人阵营'):'好人阵营';
+  const teamTxt=isWolf?(S.mode==='botc'?'恶魔阵营':(S.mode==='killgame'?'杀手阵营':'狼人阵营')):'好人阵营';
   const tb=document.getElementById('rcTeam');
   tb.textContent=teamTxt; tb.className='rteam '+(isWolf?'b-wolf':'b-good');
   document.getElementById('rcDesc').textContent=(ROLE_DESC[S.mode]&&ROLE_DESC[S.mode][S.you.role])||'';
@@ -488,6 +585,7 @@ function openGodView(){
   if(g.night){
     const n=g.night;
     const items=[];
+    if(n.note) items.push(n.note);
     if(n.wolfTarget) items.push('狼刀→'+n.wolfTarget);
     if(n.killerTarget) items.push('杀手指杀→'+n.killerTarget);
     if(n.sniperTarget) items.push('狙击→'+n.sniperTarget);
@@ -516,6 +614,14 @@ function renderGodActions(){
     return `<div class="gt">🔰 代投票（竞选）</div><div class="grow">${c}</div><div class="gmuted">点候选人 = 让所有存活玩家投TA</div>`;
   }
   if(ph==='night'){
+    if(S.mode==='botc'){
+      const alive=g.players.filter(p=>p.alive);
+      const boxes=alive.map(p=>`<label class="grow-item"><input type="checkbox" class="botc-death" value="${p.id}"> <span>${escapeHtml(p.name)}</span> <span class="${p.team==='wolf'?'b-wolf':'b-good'}">${MODES[S.mode].roles[p.role].name}</span></label>`).join('');
+      return `<div class="gt">🌙 说书人结算本夜</div>
+        <div class="grow" style="flex-direction:column;align-items:stretch">${boxes}</div>
+        <button class="gbtn" style="margin-top:8px" onclick="godBotcNightEnd()">☀️ 结束夜晚（勾选=死亡）</button>
+        <div class="gmuted">不勾选任何人 = 平安夜。由说书人根据角色技能手动决定死亡。</div>`;
+    }
     const step=S.night.steps[S.night.step];
     const label=S.night.stepName||'';
     const actors=g.players.filter(p=>p.role===godRoleOf(step) && p.alive);
@@ -557,6 +663,11 @@ function renderGodActions(){
   return '';
 }
 async function fillBots(){ const r=await post('/api/add_bots',{code:me.code,playerId:me.playerId}); if(!r.ok)toast(r.error||'填充失败'); }
+async function godBotcNightEnd(){
+  const ids=[...document.querySelectorAll('.botc-death:checked')].map(c=>c.value);
+  const r=await act('botc_night_end',{deaths:ids});
+  if(!r.ok) toast(r.error||'结算失败');
+}
 async function godSheriffAll(cid){ for(const p of S.godView.players){ if(p.alive) await act('sheriff_vote',{playerId:p.id,target:cid}); } }
 async function godNight(step,tid){
   const actors=S.godView.players.filter(p=>p.role===godRoleOf(step) && p.alive);
@@ -765,6 +876,15 @@ function submitDoctor(){act('doctor',{target:selTarget});selTarget=null;}
 function submitPolice(){act('police',{target:selTarget});selTarget=null;}
 function submitOldman(){act('oldman',{target:selTarget});selTarget=null;}
 
+// ---------- night: botc（血染钟楼：说书人手动结算） ----------
+function renderNightBotc(){
+  const hostNote = S.you.id===S.hostId
+    ? `<div class="prompt" style="margin-top:10px">你是<b>说书人</b>：打开右上角「🔍 裁判总览」，勾选本夜死亡者并点击「结束夜晚」。</div>`
+    : `<div class="prompt" style="margin-top:10px">等待说书人结算本夜…</div>`;
+  return `<div class="title-c"><span class="big">🌙</span><div>第 ${S.day} 夜</div></div>
+    <div class="prompt center">🌙 第 ${S.day} 夜 · 说书人手动结算<br><br>血染钟楼的夜晚由说书人（法官）主持，玩家无需在手机上操作。</div>${hostNote}`;
+}
+
 // ---------- day ----------
 function renderDay(){
   let dead='';
@@ -852,7 +972,7 @@ function openBomb(){
   document.getElementById('bombModal').classList.add('show');
 }
 function renderEnd(){
-  const win=S.result==='good'?(S.mode==='killgame'?'🎉 好人阵营胜利！':'🎉 好人阵营胜利！'):(S.mode==='killgame'?'🔪 杀手阵营胜利！':'🐺 狼人阵营胜利！');
+  const win=S.result==='good'?(S.mode==='botc'?'🎉 善良阵营胜利！':'🎉 好人阵营胜利！'):(S.mode==='botc'?'👿 恶魔阵营胜利！':(S.mode==='killgame'?'🔪 杀手阵营胜利！':'🐺 狼人阵营胜利！'));
   const cls=S.result==='good'?'b-good':'b-wolf';
   const rs=S.players.map(p=>{const d=ROLE_DEFS[p.role];return `<div class="ri"><span class="re">${d.emoji}</span><span style="flex:1">${escapeHtml(p.name)}</span><span class="${p.team==='wolf'?'b-wolf':'b-good'}">${d.name}</span><span class="muted">${p.alive?'存活':'出局'}</span></div>`;}).join('');
   return `<div class="title-c"><div class="codebig" style="font-size:26px;color:${S.result==='good'?'var(--good)':'var(--wolf)'}">${win}</div></div>
