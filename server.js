@@ -159,6 +159,8 @@ function view(room, pid) {
   return {
     mode: room.mode,
     code: room.code, phase: room.phase, day: room.day, hostId: room.hostId, noJudge: !!room.noJudge,
+    needed: expandRoles(room.roleConfig, MODES[room.mode].roleOrder).length,
+    botCount: room.players.filter(p => p.isBot).length,
     sheriff: room.sheriff || null,
     timer: room.phaseEndsAt ? { endsAt: room.phaseEndsAt, total: phaseTotal(room) } : null,
     you: { id: me.id, name: me.name, role: me.role, team: me.team, alive: me.alive, isWolf: me.isWolf },
@@ -678,6 +680,25 @@ function handleApi(url, data) {
       if (room.ready) room.ready.delete(pid);
       if (room.proceed) room.proceed.delete(pid);
       return { ok: true };
+    }
+    case '/api/add_bots': {
+      const room = rooms.get(data.code);
+      if (!room) return { ok: false, error: '房间不存在' };
+      if (data.playerId !== room.hostId) return { ok: false, error: '只有法官能填充机器人' };
+      if (room.phase !== 'lobby') return { ok: false, error: '游戏已开始，无法填充' };
+      const needed = expandRoles(room.roleConfig, MODES[room.mode].roleOrder).length;
+      const have = room.players.length;
+      let n = needed - have; if (n < 0) n = 0;
+      // 先移除已存在的机器人，保证重复点击为「精确填充到配置人数」
+      room.players = room.players.filter(p => !p.isBot);
+      let added = 0;
+      for (let i = 1; i <= n; i++) {
+        const id = uid();
+        room.players.push({ id, name: '🤖机器人' + i, role: null, team: null, isWolf: false, alive: true, connected: true, isBot: true });
+        added++;
+      }
+      if (added > 0) log(room, `法官填充了 ${added} 个机器人（用于单人测试）。`);
+      return { ok: true, added, total: room.players.length, _broadcast: true, _room: room };
     }
     case '/api/action': {
       const room = rooms.get(data.code);

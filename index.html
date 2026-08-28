@@ -107,6 +107,13 @@
   .godview .gv .ri .gn{font-weight:700;flex:1;}
   .godview .gv .ri .gs{font-size:11px;color:var(--sub);}
   .godview .sum{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--sub);line-height:1.6;margin-top:8px;text-align:left;}
+  .godview .gact{background:rgba(90,140,255,.10);border:1px dashed var(--acc);border-radius:10px;padding:10px;margin-top:10px;text-align:left;}
+  .godview .gact .gt{font-weight:800;margin-bottom:6px;}
+  .godview .gact .grow{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+  .godview .gact .gbtn{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer;}
+  .godview .gact .gbtn.ghost{background:transparent;color:var(--sub);border:1px solid var(--line);}
+  .godview .gact .gmuted{font-size:11px;color:var(--sub);margin-top:4px;line-height:1.5;}
+  .lobbyfill{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px;flex-wrap:wrap;}
 </style>
 </head>
 <body>
@@ -214,6 +221,7 @@
     <div class="mt" style="text-align:center">🔍 裁判总览</div>
     <div class="gv" id="godList"></div>
     <div class="sum" id="godSum"></div>
+    <div class="gact" id="godActions"></div>
     <button class="btn" style="margin-top:12px" onclick="document.getElementById('godModal').classList.remove('show')">关闭</button>
   </div>
 </div>
@@ -413,6 +421,9 @@ function render(){
   ci.classList.toggle('disabled', !!(S.silencedId && S.you.id===S.silencedId));
   // 裁判总览按钮仅 host 可见
   document.getElementById('judgeBtn').style.display=(S.you.id===S.hostId)?'':'none';
+  // 裁判总览打开时，随阶段实时刷新代操作面板
+  const gmEl=document.getElementById('godModal');
+  if(gmEl && gmEl.classList.contains('show') && S.godView) document.getElementById('godActions').innerHTML=renderGodActions();
   renderChat();
 }
 function renderMe(){
@@ -489,8 +500,82 @@ function openGodView(){
     if(items.length) sum+='上一夜：'+items.join('；');
   }
   document.getElementById('godSum').innerHTML=sum||'（暂无夜晚行动记录）';
+  document.getElementById('godActions').innerHTML=renderGodActions();
   document.getElementById('godModal').classList.add('show');
 }
+
+// 裁判上帝视角：法官代机器人操作（单人测试用）
+const GOD_ROLE_OF_STEP = { wolf: 'werewolf' }; // 夜晚步骤名与角色 key 不完全一致
+function godRoleOf(step){ return GOD_ROLE_OF_STEP[step] || step; }
+function renderGodActions(){
+  if(!S||!S.godView) return '';
+  const g=S.godView, ph=S.phase;
+  if(ph==='sheriff'){
+    const alive=g.players.filter(p=>p.alive);
+    const c=alive.map(x=>`<button class="gbtn" onclick="godSheriffAll('${x.id}')">${escapeHtml(x.name)}</button>`).join('');
+    return `<div class="gt">🔰 代投票（竞选）</div><div class="grow">${c}</div><div class="gmuted">点候选人 = 让所有存活玩家投TA</div>`;
+  }
+  if(ph==='night'){
+    const step=S.night.steps[S.night.step];
+    const label=S.night.stepName||'';
+    const actors=g.players.filter(p=>p.role===godRoleOf(step) && p.alive);
+    if(!actors.length) return `<div class="gt">🌙 ${label}</div><div class="gmuted">无在场角色</div>`;
+    let inner='';
+    if(step==='witch'){
+      const w=actors[0];
+      inner=`<button class="gbtn" onclick="godWitch('${w.id}','heal')">💊 救（解药）</button>
+             <button class="gbtn" onclick="godWitch('${w.id}','skip')">跳过</button>
+             <span class="gmuted">毒→</span>`+g.players.filter(p=>p.alive).map(p=>`<button class="gbtn" onclick="godWitch('${w.id}','poison','${p.id}')">${escapeHtml(p.name)}</button>`).join('');
+    } else {
+      const isWolfStep=(step==='wolf'||step==='killer');
+      let targets;
+      if(step==='butterfly') targets=g.players.filter(p=>p.alive && p.id!==actors[0].id);
+      else if(isWolfStep) targets=g.players.filter(p=>p.alive && p.team!=='wolf');
+      else targets=g.players.filter(p=>p.alive);
+      inner=`<div class="grow">${targets.map(t=>`<button class="gbtn" onclick="godNight('${step}','${t.id}')">${escapeHtml(t.name)}</button>`).join('')}</div>`;
+    }
+    return `<div class="gt">🌙 ${label} <span class="gmuted">(${actors.map(a=>a.name).join('/')})</span></div>${inner}<div class="grow" style="margin-top:8px"><button class="gbtn ghost" onclick="godSkip()">跳过此步</button></div>`;
+  }
+  if(ph==='vote'){
+    const alive=g.players.filter(p=>p.alive);
+    const c=alive.map(x=>`<button class="gbtn" onclick="godVoteAll('${x.id}')">${escapeHtml(x.name)}</button>`).join('');
+    return `<div class="gt">🗳️ 代投票</div><div class="grow">${c}</div><div class="gmuted">点候选人 = 所有机器人+法官投TA</div><button class="gbtn ghost" style="margin-top:6px" onclick="godForceVote()">强制结算</button>`;
+  }
+  if(ph==='lastwords'){
+    const sp=(S.lastWords&&S.lastWords.speakers)||[];
+    return `<div class="gt">💬 遗言环节</div><div class="gmuted">出局者：${sp.map(s=>escapeHtml(s.name)).join('、')||'无'}</div><button class="gbtn" style="margin-top:6px" onclick="godEndLastWords()">结束遗言环节</button>`;
+  }
+  if(ph==='day'){
+    return `<div class="gt">☀️ 白天</div><button class="gbtn" style="margin-top:6px" onclick="godStartVote()">开始投票</button>`;
+  }
+  if(ph==='hunter'){
+    const h=g.players.find(p=>p.role==='hunter' && !p.alive);
+    if(!h) return `<div class="gt">🏹 猎人开枪</div><div class="gmuted">等待猎人操作…</div>`;
+    const tg=g.players.filter(p=>p.alive).map(p=>`<button class="gbtn" onclick="godHunterShoot('${h.id}','${p.id}')">${escapeHtml(p.name)}</button>`).join('');
+    return `<div class="gt">🏹 猎人（机器人）开枪</div><div class="grow">${tg}</div><div class="gmuted">点目标 = 代猎人开枪</div>`;
+  }
+  return '';
+}
+async function fillBots(){ const r=await post('/api/add_bots',{code:me.code,playerId:me.playerId}); if(!r.ok)toast(r.error||'填充失败'); }
+async function godSheriffAll(cid){ for(const p of S.godView.players){ if(p.alive) await act('sheriff_vote',{playerId:p.id,target:cid}); } }
+async function godNight(step,tid){
+  const actors=S.godView.players.filter(p=>p.role===godRoleOf(step) && p.alive);
+  const typeMap={wolf:'wolf_kill',guard:'guard',seer:'seer',witch:'witch',butterfly:'butterfly',sniper:'sniper',killer:'killer',doctor:'doctor',police:'police',oldman:'oldman'};
+  for(const a of actors){ await act(typeMap[step],{playerId:a.id,target:tid}); }
+}
+async function godWitch(wid,mode,tid){
+  if(mode==='heal') await act('witch',{playerId:wid,heal:true,poison:null});
+  else if(mode==='poison') await act('witch',{playerId:wid,heal:false,poison:tid});
+  else await act('witch',{playerId:wid,heal:false,poison:null});
+}
+async function godSkip(){ await act('host_skip'); }
+async function godVoteAll(cid){
+  for(const p of S.godView.players){ if(p.alive && p.id!==cid) await act('vote',{playerId:p.id,target:cid}); }
+}
+async function godForceVote(){ await act('host_force_vote'); }
+async function godStartVote(){ await act('start_vote'); }
+async function godEndLastWords(){ if(S.lastWords) for(const sp of S.lastWords.speakers){ await act('lastwords',{playerId:sp.id,text:''}); } }
+async function godHunterShoot(hid,tid){ await act('hunter_shoot',{playerId:hid,target:tid}); }
 
 // ---------- 警长竞选 ----------
 function renderSheriff(){
@@ -551,7 +636,12 @@ function renderLobby(){
   if(S.noJudge){
     bottom=`<button class="btn ${S.youReady?'ghost':''}" onclick="act('ready')">${S.youReady?'已准备 ✓':'准备并开始'}（${S.readyCount}/${S.readyTotal}）</button>`;
   }else if(isHost){
-    bottom=`<button class="btn" onclick="startGame()">开始游戏（${S.players.length}人）</button>`;
+    const missing = (S.needed||0) - S.players.length;
+    const fillBtn = missing>0
+      ? `<button class="btn ghost" onclick="fillBots()">🤖 一键填充 ${missing} 个机器人</button>`
+      : `<button class="btn ghost" onclick="fillBots()">🤖 重新填充机器人</button>`;
+    bottom=`<button class="btn" onclick="startGame()">开始游戏（${S.players.length}人）</button>
+      <div class="lobbyfill">${fillBtn}<span class="muted" style="font-size:12px">单人测试：用机器人凑齐人数，开局后到「裁判总览」里代它们操作</span></div>`;
   }else{
     bottom=`<p class="center muted">等待法官开始游戏…</p>`;
   }
