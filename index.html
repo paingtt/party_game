@@ -341,7 +341,7 @@ const ROLE_DESC = {
   },
   killgame: {
     killer: '杀手阵营。每晚与狙击手商议，选择要击杀的人。',
-    sniper: '杀手阵营。每晚可狙杀一人（仅一次机会，命中即死）。',
+    sniper: '杀手阵营。每晚可狙杀一人（与杀手分别行动；被医生救治可免死）。',
     terrorist: '杀手阵营。被投票放逐时可引爆，与目标同归于尽（目标若为杀手方则只有你出局）。',
     police: '好人阵营。每晚指认一人，得知其阵营。',
     doctor: '好人阵营。每晚可救治一人；若救错人则累计一次空针，两次空针将其扎死。',
@@ -527,7 +527,10 @@ function render(){
   else bt.style.display='none';
   // 血染钟楼：说书人发来的信息（首日信息/查验结果等）
   const it=document.getElementById('infoTip');
-  if(S.info && S.info.length){ it.style.display=''; it.innerHTML='📨 '+S.info.map(x=>escapeHtml(x)).join('<br>📨 '); }
+  let infoHtml='';
+  if(S.poisoned) infoHtml+='☠️ 你中毒了（毒师所致，你获得的信息可能出错）<br>';
+  if(S.info && S.info.length) infoHtml+='📨 '+S.info.map(x=>escapeHtml(x)).join('<br>📨 ');
+  if(infoHtml){ it.style.display=''; it.innerHTML=infoHtml; }
   else it.style.display='none';
   // 首次进入游戏：自动弹出“我的角色”卡
   if(S.phase!=='lobby' && S.you.role && !roleCardShown){ roleCardShown=true; showRoleCard(); }
@@ -544,7 +547,8 @@ function render(){
   cp.style.display=(S.phase==='day'||S.phase==='vote'||S.phase==='hunter'||S.phase==='sheriff'||S.phase==='lastwords')?'flex':'none';
   // 被森林老人禁言则禁用发言
   const ci=document.getElementById('chatInput');
-  ci.classList.toggle('disabled', !!(S.silencedId && S.you.id===S.silencedId));
+  const muted = !!(S.silencedId && S.you.id===S.silencedId) || (S.mode!=='botc' && !S.you.alive);
+  ci.classList.toggle('disabled', muted);
   // 裁判总览按钮仅 host 可见
   document.getElementById('judgeBtn').style.display=(S.you.id===S.hostId)?'':'none';
   // 裁判总览打开时，随阶段实时刷新代操作面板
@@ -566,7 +570,7 @@ function renderMe(){
 }
 function aliveList(){return S.players.filter(p=>p.alive);}
 function pbtn(p,sel,onClick,disabled){
-  const rd = ROLE_DEFS[p.role] || (currentMode==='botc'?MODES.botc.roles.demon:(currentMode==='killgame'?MODES.killgame.roles.civilian:MODES.werewolf.roles.villager));
+  const rd = ROLE_DEFS[p.role] || (currentMode==='botc'?{emoji:'❓',name:'未知'}:(currentMode==='killgame'?MODES.killgame.roles.civilian:MODES.werewolf.roles.villager));
   const sh = p.sheriff ? '<div class="tag" style="color:var(--warn)">🔰</div>' : '';
   return `<div class="pbtn ${sel?'sel':''} ${disabled?'dead':''}" ${onClick?`onclick="${onClick}"`:''}>
     <div class="pemoji">${rd.emoji}</div>
@@ -638,6 +642,10 @@ function godRoleOf(step){ return GOD_ROLE_OF_STEP[step] || step; }
 function renderGodActions(){
   if(!S||!S.godView) return '';
   const g=S.godView, ph=S.phase;
+  if(S.sheriffHandover){
+    const alive=g.players.filter(p=>p.alive);
+    return `<div class="gt">🔰 移交警徽</div><div class="gmuted">警长已出局，移交给谁？（新警长投票仍计 2 票）</div><div class="grow">${alive.map(x=>`<button class="gbtn" onclick="godSheriffHandover('${x.id}')">${escapeHtml(x.name)}</button>`).join('')}</div>`;
+  }
   if(ph==='sheriff'){
     const alive=g.players.filter(p=>p.alive);
     const c=alive.map(x=>`<button class="gbtn" onclick="godSheriffAll('${x.id}')">${escapeHtml(x.name)}</button>`).join('');
@@ -647,10 +655,15 @@ function renderGodActions(){
     if(S.mode==='botc'){
       const alive=g.players.filter(p=>p.alive);
       const boxes=alive.map(p=>`<label class="grow-item"><input type="checkbox" class="botc-death" value="${p.id}"> <span>${escapeHtml(p.name)}</span> <span class="${p.team==='wolf'?'b-wolf':'b-good'}">${MODES[S.mode].roles[p.role].name}</span></label>`).join('');
+      const poisonBtns=g.players.filter(p=>p.alive).map(p=>`<button class="gbtn ghost" onclick="godBotcPoison('${p.id}')">${escapeHtml(p.name)}</button>`).join('');
       return `<div class="gt">🌙 说书人结算本夜</div>
         <div class="grow" style="flex-direction:column;align-items:stretch">${boxes}</div>
         <button class="gbtn" style="margin-top:8px" onclick="godBotcNightEnd()">☀️ 结束夜晚（勾选=死亡）</button>
-        <div class="gmuted">不勾选任何人 = 平安夜。由说书人根据角色技能手动决定死亡。</div>`;
+        <div class="gmuted">不勾选任何人 = 平安夜。由说书人根据角色技能手动决定死亡。</div>
+        <div class="gt" style="margin-top:10px">☠️ 标记中毒（毒师）</div>
+        <div class="gmuted">当前中毒：${g.poisoned?escapeHtml(g.poisoned):'无'}</div>
+        <div class="grow">${poisonBtns}</div>
+        <button class="gbtn ghost" style="margin-top:6px" onclick="godBotcPoison('')">清除中毒</button>`;
     }
     const step=S.night.steps[S.night.step];
     const label=S.night.stepName||'';
@@ -720,6 +733,14 @@ async function godInfoSend(){
   const text=document.getElementById('godInfoText').value;
   const r=await act('botc_send_info',{target,text});
   if(r&&!r.ok) toast(r.error||'发送失败');
+}
+async function godSheriffHandover(tid){
+  const r=await act('sheriff_handover',{target:tid});
+  if(r&&!r.ok) toast(r.error||'移交失败');
+}
+async function godBotcPoison(tid){
+  const r=await act('botc_poison',{target:tid||null});
+  if(r&&!r.ok) toast(r.error||'操作失败');
 }
 async function godSheriffAll(cid){ for(const p of S.godView.players){ if(p.alive) await act('sheriff_vote',{playerId:p.id,target:cid}); } }
 async function godNight(step,tid){

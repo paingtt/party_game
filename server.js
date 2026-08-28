@@ -151,6 +151,7 @@ function kill(room, id, cause) {
   else tag = '夜晚被击杀';
   log(room, `${p.name}（${RD[p.role].name}）${tag}。`);
   if (room.mode === 'werewolf' && p.role === 'hunter' && cause !== 'poison') room.hunter = { pending: true, deadId: id, votePath: room.phase === 'vote' };
+  if (room.sheriff === id) { room.sheriff = null; room.sheriffHandover = true; log(room, '警长出局，法官可将警徽移交给其他玩家。'); }
 }
 
 function checkWin(room) {
@@ -159,11 +160,18 @@ function checkWin(room) {
   return checkWinKillgame(room);
 }
 function checkWinBotc(room) {
+  botcInheritDemon(room);
   const demons = room.players.filter(p => p.role === 'demon' && p.alive).length;
   const good = room.players.filter(p => p.team === 'good' && p.alive).length;
   if (demons === 0) return 'good';
   if (good <= demons) return 'wolf';
   return null;
+}
+// 绯红女郎：恶魔死亡时若其存活，则继承恶魔之力变成新的恶魔
+function botcInheritDemon(room) {
+  if (room.players.some(p => p.role === 'demon' && p.alive)) return;
+  const sw = room.players.find(p => p.role === 'scarlet_woman' && p.alive);
+  if (sw) { sw.role = 'demon'; log(room, `${sw.name}（绯红女郎）继承了恶魔之力，成为新的恶魔。`); }
 }
 // 血染钟楼：为恶魔/爪牙挑选 3 个「本局未使用」的善良角色作为外皮(bluff)，用于伪装
 function buildBotcBluff(room) {
@@ -194,9 +202,9 @@ function view(room, pid) {
   const me = room.players.find(p => p.id === pid);
   if (!me) return { error: 'not_found' };
   const RD = MODES[room.mode].roles;
-  const wolfVisible = (room.mode === 'botc' && me.team === 'wolf');
+  const wolfTeam = (room.mode === 'botc') ? (me.team === 'wolf') : (me.isWolf && me.alive);
   const players = room.players.map(p => {
-    const reveal = (room.phase === 'end') || (p.id === pid) || (wolfVisible && p.team === 'wolf');
+    const reveal = (room.phase === 'end') || (p.id === pid) || (wolfTeam && p.team === 'wolf');
     return {
       id: p.id, name: p.name, alive: p.alive,
       role: reveal ? p.role : null,
@@ -217,7 +225,9 @@ function view(room, pid) {
     needed: expandRoles(room.roleConfig, MODES[room.mode].roleOrder).length,
     botCount: room.players.filter(p => p.isBot).length,
     sheriff: room.sheriff || null,
-    timer: room.phaseEndsAt ? { endsAt: room.phaseEndsAt, total: phaseTotal(room) } : null,
+    timer: (room.phaseEndsAt && !(room.mode === 'botc' && (room.phase === 'day' || room.phase === 'night'))) ? { endsAt: room.phaseEndsAt, total: phaseTotal(room) } : null,
+    sheriffHandover: !!(room.sheriffHandover && pid === room.hostId),
+    poisoned: !!(room.mode === 'botc' && room.poisoned && me.id === room.poisoned),
     you: { id: me.id, name: me.name, role: me.role, team: me.team, alive: me.alive, isWolf: me.isWolf },
     bluff: (room.mode === 'botc' && me.team === 'wolf' && room.bluff) ? room.bluff : null,
     info: (room.mode === 'botc' && room.infos && room.infos[me.id] && room.infos[me.id].length) ? room.infos[me.id].slice(-5) : null,
@@ -273,7 +283,13 @@ function buildGodView(room) {
       };
     }
   }
-  return { players, night, sheriff: room.sheriff ? nameOf(room, room.sheriff) : null, bluff: room.bluff || null };
+  return {
+    players, night,
+    sheriff: room.sheriff ? nameOf(room, room.sheriff) : null,
+    bluff: room.bluff || null,
+    poisoned: room.poisoned ? nameOf(room, room.poisoned) : null,
+    sheriffHandover: !!room.sheriffHandover,
+  };
 }
 
 function buildMyAction(room, me) {
@@ -402,7 +418,7 @@ function startNight(room, first) {
   room.silenced = null;
   if (room.mode === 'botc') {
     room.night = { steps: ['storyteller'], step: 0 };
-    room.phaseEndsAt = null;
+    setPhaseTimer(room, BOTC_IDLE_TIMEOUT, () => { if (room.phase === 'night') { log(room, '夜晚超时，按无人死亡天亮。'); afterNight(room); } });
     log(room, `第 ${room.day} 夜降临（血染钟楼：说书人手动结算）。`);
     broadcast(room);
     return;
@@ -432,6 +448,7 @@ const DAY_DURATION = 180000;       // 白天讨论时长
 const VOTE_DURATION = 60000;       // 投票时长
 const LASTWORDS_DURATION = 30000;  // 遗言时长
 const SHERIFF_DURATION = 60000;    // 警长竞选时长
+const BOTC_IDLE_TIMEOUT = 15 * 60 * 1000; // 血染钟楼防卡死：白天/夜晚最长停滞时间（说书人迟迟不操作时兜底推进）
 
 // 阶段倒计时：server 设定 deadline，前端据此实时读秒；到点由对应回调自动推进
 function setPhaseTimer(room, ms, cb) {
@@ -585,7 +602,7 @@ function enterDay(room) {
   room.phase = 'day';
   room.proceed = new Set();
   if (room.mode === 'botc') {
-    clearPhaseTimer(room);
+    setPhaseTimer(room, BOTC_IDLE_TIMEOUT, () => { if (room.phase === 'day') { log(room, '讨论超时，自动开始处决投票。'); startVote(room); } });
     log(room, '进入白天讨论（说书人可随时开始处决投票）。');
   } else {
     setPhaseTimer(room, DAY_DURATION, () => { if (room.phase === 'day') { log(room, '讨论时间到，进入投票。'); startVote(room); } });
@@ -644,7 +661,18 @@ function finishVote(room) {
     else { eliminated = winners[Math.floor(Math.random() * winners.length)]; log(room, `票型平局，随机淘汰 ${nameOf(room, eliminated)}。`); }
   }
   else { eliminated = winners[0]; log(room, `投票结果：${nameOf(room, eliminated)} 以 ${max} 票被放逐。`); }
-  if (eliminated != null) kill(room, eliminated, room.mode === 'botc' ? 'execution' : 'vote');
+  if (eliminated != null) {
+    const ep = room.players.find(p => p.id === eliminated);
+    kill(room, eliminated, room.mode === 'botc' ? 'execution' : 'vote');
+    // 血染钟楼：市长被处决 → 恶魔阵营获胜（恶魔已死则按正常结算）
+    if (room.mode === 'botc' && ep && ep.role === 'mayor') {
+      room.votes = {};
+      if (!room.players.some(p => p.role === 'demon' && p.alive)) { afterVoteCont(room); return; }
+      room.phase = 'end'; room.result = 'wolf';
+      log(room, '市长被处决，恶魔阵营胜利！');
+      clearPhaseTimer(room); broadcast(room); return;
+    }
+  }
   room.votes = {};
   if (room.mode === 'botc') { afterVoteCont(room); return; }
   if (eliminated != null) enterLastWords(room, () => afterVoteCont(room), [eliminated]);
@@ -795,6 +823,7 @@ function handleApi(url, data) {
       if (!me) return { ok: false, error: '玩家不存在' };
       const type = data.type;
       if (type === 'chat') {
+        if (room.mode !== 'botc' && !me.alive) return { ok: false, error: '你已出局，无法发言' };
         const text = (data.text || '').toString().slice(0, 200);
         if (text) { room.chat.push({ name: me.name, text, ts: Date.now() }); if (room.chat.length > 100) room.chat.shift(); }
         return { ok: true, _broadcast: true, _room: room };
@@ -911,6 +940,27 @@ function handleApi(url, data) {
         room.infos[data.target] = room.infos[data.target] || [];
         room.infos[data.target].push(text);
         log(room, `说书人向 ${tp.name} 发送了信息。`);
+        return { ok: true, _broadcast: true, _room: room };
+      }
+      if (type === 'sheriff_handover') {
+        if (room.mode !== 'werewolf') return { ok: false, error: '无效操作' };
+        if (pid !== room.hostId) return { ok: false, error: '只有法官能移交警徽' };
+        if (!room.sheriffHandover) return { ok: false, error: '当前无需移交警徽' };
+        const tp = room.players.find(p => p.id === data.target);
+        if (!tp || !tp.alive) return { ok: false, error: '无效目标' };
+        room.sheriff = tp.id; room.sheriffHandover = false;
+        log(room, `法官将警徽移交给 ${tp.name}（🔰）。`);
+        return { ok: true, _broadcast: true, _room: room };
+      }
+      if (type === 'botc_poison') {
+        if (room.mode !== 'botc') return { ok: false, error: '无效操作' };
+        if (pid !== room.hostId) return { ok: false, error: '只有说书人能标记中毒' };
+        const t = data.target;
+        if (t == null || t === '') { room.poisoned = null; log(room, '说书人清除了中毒标记。'); return { ok: true, _broadcast: true, _room: room }; }
+        const tp = room.players.find(p => p.id === t);
+        if (!tp) return { ok: false, error: '无效目标' };
+        room.poisoned = t;
+        log(room, '说书人标记了一名玩家中毒。');
         return { ok: true, _broadcast: true, _room: room };
       }
       if (room.phase === 'night') {
