@@ -117,6 +117,8 @@
   .grow-item{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:13px;cursor:pointer;}
   .grow-item input{width:auto;}
   .blufftip{margin:8px 0;background:linear-gradient(90deg,rgba(120,60,180,.16),rgba(120,60,180,.05));border:1px solid rgba(120,60,180,.35);border-radius:10px;padding:8px 12px;font-size:13px;color:var(--txt);text-align:center;}
+  .botc-check{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;width:100%;}
+  .botc-check input{width:auto;flex:none;}
 </style>
 </head>
 <body>
@@ -380,8 +382,12 @@ function buildHome(){
   MODES[currentMode].roleOrder.forEach(r=>{
     const d=MODES[currentMode].roles[r];
     const row=document.createElement('div'); row.className='stepper';
-    row.innerHTML=`<div class="rname"><span class="remoji">${d.emoji}</span><span>${d.name}</span></div>
+    if(currentMode==='botc'){
+      row.innerHTML=`<label class="botc-check"><input type="checkbox" id="chk_${r}" onchange="botcCheckChange()"><span class="remoji">${d.emoji}</span><span>${d.name}</span><span class="badge ${d.team==='wolf'?'b-wolf':'b-good'}" style="font-size:11px">${d.team==='wolf'?'邪恶':'善良'}</span></label>`;
+    }else{
+      row.innerHTML=`<div class="rname"><span class="remoji">${d.emoji}</span><span>${d.name}</span></div>
       <div class="step-ctrl"><button onclick="step('${r}',-1)">−</button><span class="num" id="num_${r}">0</span><button onclick="step('${r}',1)">+</button></div>`;
+    }
     sc.appendChild(row);
   });
   // 血染钟楼：说书人手动配置本局角色（步进器微调），支持一键随机；botc 必须有说书人，隐藏「无需法官」
@@ -396,19 +402,33 @@ function buildHome(){
     document.getElementById('botcSummary').style.display='none';
   }
 }
-// 血染钟楼：按当前总人数一键随机生成角色配置（说书人可在此基础上手动 +/- 微调）
+// 血染钟楼：按当前勾选人数一键随机生成角色配置（说书人可在此基础上手动勾/取消）
 function botcRandom(){
   const cur=parseInt((document.getElementById('totalCount')||{}).textContent)||6;
   const k=Math.max(5,Math.min(12,cur));
   const cfg=botcGenRoles(k);
-  MODES.botc.roleOrder.forEach(r=>{const el=document.getElementById('num_'+r); if(el) el.textContent=cfg[r]||0;});
-  document.getElementById('presetHint').innerHTML=`<button class="btn ghost sm" onclick="botcRandom()">🎲 随机生成</button><span style="margin-left:6px">手动 ± 微调本局角色（说书人配置）</span>`;
+  MODES.botc.roleOrder.forEach(r=>{const el=document.getElementById('chk_'+r); if(el) el.checked=!!cfg[r];});
+  document.getElementById('presetHint').innerHTML=`<button class="btn ghost sm" onclick="botcRandom()">🎲 随机生成</button><span style="margin-left:6px">勾选本局角色（每种至多 1 个）</span>`;
+  updateTotal();
+}
+function botcCheckChange(){
+  document.getElementById('presetHint').innerHTML=`<button class="btn ghost sm" onclick="botcRandom()">🎲 随机生成</button><span style="margin-left:6px">勾选本局角色（每种至多 1 个）</span>`;
   updateTotal();
 }
 function applyPreset(k){const p=MODES[currentMode].presets[k];MODES[currentMode].roleOrder.forEach(r=>document.getElementById('num_'+r).textContent=p[r]||0);currentPreset=k;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.toggle('on',c.textContent===k));document.getElementById('presetHint').textContent='';updateTotal();}
 function step(r,d){const el=document.getElementById('num_'+r);let v=parseInt(el.textContent)+d;if(v<0)v=0;if(v>20)v=20;el.textContent=v;currentPreset=null;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.remove('on'));document.getElementById('presetHint').textContent='自定义';updateTotal();}
-function updateTotal(){let t=0;MODES[currentMode].roleOrder.forEach(r=>t+=parseInt(document.getElementById('num_'+r).textContent));document.getElementById('totalCount').textContent=t;}
-function getRoles(){const o={};MODES[currentMode].roleOrder.forEach(r=>o[r]=parseInt(document.getElementById('num_'+r).textContent));return o;}
+function updateTotal(){
+  let t=0;
+  if(currentMode==='botc'){ MODES.botc.roleOrder.forEach(r=>{const el=document.getElementById('chk_'+r); if(el&&el.checked)t++;}); }
+  else MODES[currentMode].roleOrder.forEach(r=>t+=parseInt(document.getElementById('num_'+r).textContent));
+  document.getElementById('totalCount').textContent=t;
+}
+function getRoles(){
+  const o={};
+  if(currentMode==='botc'){ MODES.botc.roleOrder.forEach(r=>{const el=document.getElementById('chk_'+r); o[r]=el&&el.checked?1:0;}); }
+  else MODES[currentMode].roleOrder.forEach(r=>o[r]=parseInt(document.getElementById('num_'+r).textContent));
+  return o;
+}
 
 async function createRoom(){
   const name=(document.getElementById('homeName').value||'法官').trim();
