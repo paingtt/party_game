@@ -220,6 +220,7 @@ function view(room, pid) {
     timer: room.phaseEndsAt ? { endsAt: room.phaseEndsAt, total: phaseTotal(room) } : null,
     you: { id: me.id, name: me.name, role: me.role, team: me.team, alive: me.alive, isWolf: me.isWolf },
     bluff: (room.mode === 'botc' && me.team === 'wolf' && room.bluff) ? room.bluff : null,
+    info: (room.mode === 'botc' && room.infos && room.infos[me.id] && room.infos[me.id].length) ? room.infos[me.id].slice(-5) : null,
     readyCount: room.ready ? room.ready.size : 0,
     readyTotal: room.players.length,
     youReady: !!(room.ready && room.ready.has(pid)),
@@ -341,8 +342,8 @@ function startGame(room) {
   room.terroristBombUsed = false;
   room.silenced = null;
   room.sheriff = null;
-  if (room.mode === 'botc') room.bluff = buildBotcBluff(room);
-  if (room.mode === 'werewolf') { startSheriff(room); }
+  if (room.mode === 'botc') { room.bluff = buildBotcBluff(room); room.infos = {}; enterDay(room); }
+  else if (room.mode === 'werewolf') { startSheriff(room); }
   else { startNight(room, true); }
   log(room, `游戏开始（${M.label}），共 ${room.players.length} 人。`);
   return true;
@@ -576,13 +577,19 @@ function afterNight(room) {
   const w = checkWin(room);
   if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '狼人阵营胜利！'); clearPhaseTimer(room); broadcast(room); return; }
   if (room.hunter && room.hunter.pending) { room.phase = 'hunter'; clearPhaseTimer(room); broadcast(room); return; }
+  if (room.mode === 'botc') room.day++;
   enterDay(room);
 }
 // 进入白天讨论阶段（带倒计时，到点自动进入投票）
 function enterDay(room) {
   room.phase = 'day';
   room.proceed = new Set();
-  setPhaseTimer(room, DAY_DURATION, () => { if (room.phase === 'day') { log(room, '讨论时间到，进入投票。'); startVote(room); } });
+  if (room.mode === 'botc') {
+    clearPhaseTimer(room);
+    log(room, '进入白天讨论（说书人可随时开始处决投票）。');
+  } else {
+    setPhaseTimer(room, DAY_DURATION, () => { if (room.phase === 'day') { log(room, '讨论时间到，进入投票。'); startVote(room); } });
+  }
   broadcast(room);
 }
 // 遗言环节：被放逐者发言，到点或全员发完自动继续
@@ -605,7 +612,7 @@ function afterVoteCont(room) {
   const w = checkWin(room);
   if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '好人阵营胜利！' : '狼人阵营胜利！'); clearPhaseTimer(room); broadcast(room); return; }
   if (room.mode === 'werewolf' && room.hunter && room.hunter.pending) { room.phase = 'hunter'; clearPhaseTimer(room); broadcast(room); return; }
-  room.day++;
+  if (room.mode !== 'botc') room.day++;
   startNight(room, false);
 }
 
@@ -624,14 +631,18 @@ function finishVote(room) {
   const tally = {};
   Object.entries(room.votes).forEach(([voter, t]) => {
     if (t === -1 || t === '-1') return;
-    const weight = (voter === room.sheriff) ? 2 : 1;
+    const vp = room.players.find(p => p.id === voter);
+    const weight = (room.mode === 'botc' && vp && vp.role === 'mayor') ? 3 : ((voter === room.sheriff) ? 2 : 1);
     tally[t] = (tally[t] || 0) + weight;
   });
   let max = -1, winners = [];
   Object.keys(tally).forEach(k => { const v = tally[k]; if (v > max) { max = v; winners = [k]; } else if (v === max) winners.push(k); });
   let eliminated = null;
   if (winners.length === 0) log(room, '投票平票/弃票，无人出局。');
-  else if (winners.length > 1) { eliminated = winners[Math.floor(Math.random() * winners.length)]; log(room, `票型平局，随机淘汰 ${nameOf(room, eliminated)}。`); }
+  else if (winners.length > 1) {
+    if (room.mode === 'botc') { log(room, '处决平票，无人被处决（血染钟楼规则）。'); }
+    else { eliminated = winners[Math.floor(Math.random() * winners.length)]; log(room, `票型平局，随机淘汰 ${nameOf(room, eliminated)}。`); }
+  }
   else { eliminated = winners[0]; log(room, `投票结果：${nameOf(room, eliminated)} 以 ${max} 票被放逐。`); }
   if (eliminated != null) kill(room, eliminated, room.mode === 'botc' ? 'execution' : 'vote');
   room.votes = {};
@@ -887,6 +898,19 @@ function handleApi(url, data) {
         const w = checkWin(room);
         if (w) { room.phase = 'end'; room.result = w; log(room, w === 'good' ? '善良阵营胜利！' : '恶魔阵营胜利！'); clearPhaseTimer(room); broadcast(room); return { ok: true, _broadcast: true, _room: room }; }
         afterNight(room);
+        return { ok: true, _broadcast: true, _room: room };
+      }
+      if (type === 'botc_send_info') {
+        if (room.mode !== 'botc') return { ok: false, error: '无效操作' };
+        if (pid !== room.hostId) return { ok: false, error: '只有说书人能发送信息' };
+        const tp = room.players.find(p => p.id === data.target);
+        if (!tp) return { ok: false, error: '无效目标' };
+        const text = (data.text || '').toString().slice(0, 200);
+        if (!text) return { ok: false, error: '请输入信息内容' };
+        if (!room.infos) room.infos = {};
+        room.infos[data.target] = room.infos[data.target] || [];
+        room.infos[data.target].push(text);
+        log(room, `说书人向 ${tp.name} 发送了信息。`);
         return { ok: true, _broadcast: true, _room: room };
       }
       if (room.phase === 'night') {

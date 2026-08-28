@@ -117,6 +117,7 @@
   .grow-item{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:13px;cursor:pointer;}
   .grow-item input{width:auto;}
   .blufftip{margin:8px 0;background:linear-gradient(90deg,rgba(120,60,180,.16),rgba(120,60,180,.05));border:1px solid rgba(120,60,180,.35);border-radius:10px;padding:8px 12px;font-size:13px;color:var(--txt);text-align:center;}
+  .infotip{margin:8px 0;background:linear-gradient(90deg,rgba(24,95,165,.16),rgba(24,95,165,.04));border:1px solid rgba(24,95,165,.4);border-radius:10px;padding:8px 12px;font-size:13px;color:var(--txt);text-align:left;line-height:1.7;}
   .botc-check{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;width:100%;}
   .botc-check input{width:auto;flex:none;}
 </style>
@@ -174,6 +175,7 @@
     <div class="me" id="meBar"></div>
     <div class="timerbar" id="phaseTimer"></div>
     <div id="bluffTip" class="blufftip" style="display:none"></div>
+    <div id="infoTip" class="infotip" style="display:none"></div>
     <div id="stage"></div>
     <div id="chatPanel">
       <div id="chatLog"></div>
@@ -523,6 +525,10 @@ function render(){
   const bt=document.getElementById('bluffTip');
   if(S.bluff && S.bluff.length){ bt.style.display=''; bt.innerHTML='🎭 外皮（你可伪装成）：'+S.bluff.join(' · '); }
   else bt.style.display='none';
+  // 血染钟楼：说书人发来的信息（首日信息/查验结果等）
+  const it=document.getElementById('infoTip');
+  if(S.info && S.info.length){ it.style.display=''; it.innerHTML='📨 '+S.info.map(x=>escapeHtml(x)).join('<br>📨 '); }
+  else it.style.display='none';
   // 首次进入游戏：自动弹出“我的角色”卡
   if(S.phase!=='lobby' && S.you.role && !roleCardShown){ roleCardShown=true; showRoleCard(); }
   const stage=document.getElementById('stage');
@@ -676,6 +682,18 @@ function renderGodActions(){
     return `<div class="gt">💬 遗言环节</div><div class="gmuted">出局者：${sp.map(s=>escapeHtml(s.name)).join('、')||'无'}</div><button class="gbtn" style="margin-top:6px" onclick="godEndLastWords()">结束遗言环节</button>`;
   }
   if(ph==='day'){
+    if(S.mode==='botc'){
+      const infoRoles=S.godView.players.filter(p=>p.alive && ['washerwoman','investigator','librarian','chef','fortune_teller','undertaker'].includes(p.role));
+      const quick=infoRoles.map(p=>`<button class="gbtn ghost" onclick="godInfoQuick('${p.id}','${MODES[S.mode].roles[p.role].name}')">📨 ${escapeHtml(p.name)}(${MODES[S.mode].roles[p.role].name})</button>`).join('');
+      const targets=S.godView.players.filter(p=>p.alive).map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+      return `<div class="gt">☀️ 白天</div>
+        <button class="gbtn" style="margin-top:6px" onclick="godStartVote()">🗳️ 开始处决投票</button>
+        <div class="gt" style="margin-top:10px">📨 发送信息</div>
+        <div class="grow">${quick||'<span class="gmuted">本局暂无信息角色</span>'}</div>
+        <select id="godInfoTarget" style="width:100%;margin-top:6px;padding:6px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--txt)">${targets}</select>
+        <input id="godInfoText" placeholder="信息内容，如：你得知「酒鬼」在 张三/李四 之中" style="width:100%;margin-top:6px;padding:6px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--txt)">
+        <button class="gbtn" style="margin-top:6px" onclick="godInfoSend()">发送给选中玩家</button>`;
+    }
     return `<div class="gt">☀️ 白天</div><button class="gbtn" style="margin-top:6px" onclick="godStartVote()">开始投票</button>`;
   }
   if(ph==='hunter'){
@@ -691,6 +709,17 @@ async function godBotcNightEnd(){
   const ids=[...document.querySelectorAll('.botc-death:checked')].map(c=>c.value);
   const r=await act('botc_night_end',{deaths:ids});
   if(!r.ok) toast(r.error||'结算失败');
+}
+function godInfoQuick(pid,roleName){
+  const el=document.getElementById('godInfoText');
+  el.value=`你得知「${roleName}」在 [玩家A] / [玩家B] 之中（把 A/B 换成具体玩家名）`;
+  document.getElementById('godInfoTarget').value=pid;
+}
+async function godInfoSend(){
+  const target=document.getElementById('godInfoTarget').value;
+  const text=document.getElementById('godInfoText').value;
+  const r=await act('botc_send_info',{target,text});
+  if(r&&!r.ok) toast(r.error||'发送失败');
 }
 async function godSheriffAll(cid){ for(const p of S.godView.players){ if(p.alive) await act('sheriff_vote',{playerId:p.id,target:cid}); } }
 async function godNight(step,tid){
@@ -912,7 +941,8 @@ function renderNightBotc(){
 // ---------- day ----------
 function renderDay(){
   let dead='';
-  if(S.lastDeaths.length===0) dead='昨夜是<b>平安夜</b>，没有人出局。';
+  if(S.mode==='botc' && S.day===1 && S.lastDeaths.length===0) dead='☀️ <b>游戏开始</b>，今天是首日白天。说书人可在「裁判总览」私下发送首日信息。';
+  else if(S.lastDeaths.length===0) dead='昨夜是<b>平安夜</b>，没有人出局。';
   else dead='昨夜倒下：<br>'+S.lastDeaths.map(d=>`<b>${escapeHtml(d.name)}</b>（${d.role}）`).join('、');
   let extra='';
   if(S.silencedName) extra+=`<div class="prompt" style="margin-top:8px">🌲 森林老人禁言了 <b>${escapeHtml(S.silencedName)}</b>，其白天不能发言。</div>`;
@@ -922,7 +952,7 @@ function renderDay(){
   }
   const hostBtn = S.noJudge
     ? `<button class="btn" style="margin-top:10px" onclick="act('proceed')">✅ 继续（${S.proceedCount}/${S.proceedNeed} 已确认，过半即进入投票）</button>`
-    : (S.you.id===S.hostId?`<button class="btn" style="margin-top:10px" onclick="startVote()">🗳️ 开始投票</button>`:`<p class="center muted" style="margin-top:10px">等待法官开始投票…</p>`);
+    : (S.you.id===S.hostId?`<button class="btn" style="margin-top:10px" onclick="startVote()">🗳️ ${S.mode==='botc'?'开始处决投票':'开始投票'}</button>`:`<p class="center muted" style="margin-top:10px">${S.mode==='botc'?'等待说书人开始投票…':'等待法官开始投票…'}</p>`);
   return `<div class="title-c"><span class="big">☀️</span><div>第 ${S.day} 天 · 天亮了</div></div>
     <div class="card"><div class="prompt">${dead}</div>${extra}${hostBtn}</div>
     <p class="center muted" style="margin-top:10px">大家开始发言讨论吧 👇</p>`;
@@ -954,7 +984,7 @@ function renderVote(){
     if(selVoteDone){
       body=`<div class="prompt center">✅ 你已投票，等待其他玩家（${S.votesCount}/${S.aliveCount}）…</div>`;
     }else{
-      body=`<div class="prompt"><b>🗳️ 投票放逐</b><br>选择你要投的玩家（不能投自己）。</div>
+      body=`<div class="prompt"><b>${S.mode==='botc'?'🗳️ 处决投票':'🗳️ 投票放逐'}</b><br>${S.mode==='botc'?'选择要处决的玩家（不能投自己，平票则无人出局）。':'选择你要投的玩家（不能投自己）。'}</div>
         <div class="pgrid">${alive.filter(p=>p.id!==S.you.id).map(t=>pbtn(t,selVote===t.id,`selVote='${t.id}';render();`)).join('')}</div>
         <div class="foot" style="margin-top:10px">
           <button class="btn ghost sm" onclick="selVote=-1;doVote();">弃票</button>
@@ -967,7 +997,7 @@ function renderVote(){
   if(S.mode==='killgame' && S.you.role==='terrorist' && !S.terroristBombUsed && S.you.alive){
     bomb=`<button class="btn ghost" style="margin-top:10px" onclick="openBomb()">💣 引爆（与一人同归于尽）</button>`;
   }
-  return `<div class="title-c"><span class="big">🗳️</span><div>第 ${S.day} 天 · 投票</div></div>${body}${bomb}${hostForceVoteBtn()}`;
+  return `<div class="title-c"><span class="big">🗳️</span><div>第 ${S.day} 天 · ${S.mode==='botc'?'处决':'投票'}</div></div>${body}${bomb}${hostForceVoteBtn()}`;
 }
 function doVote(){ if(selVote===undefined)return; selVoteDone=true; act('vote',{target:selVote}); }
 
