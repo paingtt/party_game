@@ -712,7 +712,7 @@ function handleApi(url, data) {
       const hostId = uid();
       const room = {
         code, mode, hostId, day: 0, phase: 'lobby',
-        noJudge: !!data.noJudge, ready: new Set(), proceed: new Set(),
+        noJudge: !!(data.noJudge && mode !== 'botc'), ready: new Set(), proceed: new Set(),
         players: [{ id: hostId, name: (data.name || (data.noJudge ? '玩家' : '法官')).slice(0, 12), role: null, team: null, isWolf: false, alive: true, connected: true }],
         roleConfig: cfg, night: null, votes: {}, chat: [], log: [], result: null, lastDeaths: [], clients: new Map(),
         emptyNeedles: {}, terroristBombUsed: false, silenced: null,

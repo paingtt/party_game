@@ -151,7 +151,7 @@
         <div id="botcSummary" class="muted" style="display:none;margin:6px 0;font-size:13px"></div>
       </div>
       <div class="total" id="totalWrap"><span>总人数</span><b id="totalCount">6</b></div>
-      <label class="field" style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--sub);cursor:pointer">
+      <label class="field" id="noJudgeField" style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--sub);cursor:pointer">
         <input type="checkbox" id="noJudge" style="width:auto"> 无需法官（全员准备后自动开局，过半玩家确认即推进）
       </label>
       <button class="btn" onclick="createRoom()">创建房间 →</button>
@@ -384,14 +384,14 @@ function buildHome(){
       <div class="step-ctrl"><button onclick="step('${r}',-1)">−</button><span class="num" id="num_${r}">0</span><button onclick="step('${r}',1)">+</button></div>`;
     sc.appendChild(row);
   });
-  // 血染钟楼：说书人手动配置本局角色（步进器微调），支持一键随机
+  // 血染钟楼：说书人手动配置本局角色（步进器微调），支持一键随机；botc 必须有说书人，隐藏「无需法官」
   if(currentMode==='botc'){
-    ['presets','botcSizes','botcSummary'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
+    ['presets','botcSizes','botcSummary','noJudgeField'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
     ['steppers','totalWrap','cfgLabel'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='';});
     botcRandom();
   }else{
     applyPreset(currentPreset);
-    ['presets','steppers','totalWrap','cfgLabel'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='';});
+    ['presets','steppers','totalWrap','cfgLabel','noJudgeField'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='';});
     document.getElementById('botcSizes').style.display='none';
     document.getElementById('botcSummary').style.display='none';
   }
