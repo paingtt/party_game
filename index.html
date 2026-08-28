@@ -116,6 +116,7 @@
   .lobbyfill{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px;flex-wrap:wrap;}
   .grow-item{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:13px;cursor:pointer;}
   .grow-item input{width:auto;}
+  .blufftip{margin:8px 0;background:linear-gradient(90deg,rgba(120,60,180,.16),rgba(120,60,180,.05));border:1px solid rgba(120,60,180,.35);border-radius:10px;padding:8px 12px;font-size:13px;color:var(--txt);text-align:center;}
 </style>
 </head>
 <body>
@@ -170,6 +171,7 @@
   <section id="game" class="screen">
     <div class="me" id="meBar"></div>
     <div class="timerbar" id="phaseTimer"></div>
+    <div id="bluffTip" class="blufftip" style="display:none"></div>
     <div id="stage"></div>
     <div id="chatPanel">
       <div id="chatLog"></div>
@@ -382,12 +384,11 @@ function buildHome(){
       <div class="step-ctrl"><button onclick="step('${r}',-1)">−</button><span class="num" id="num_${r}">0</span><button onclick="step('${r}',1)">+</button></div>`;
     sc.appendChild(row);
   });
-  // 血染钟楼：隐藏通用步进器，改用「选择人数」生成随机角色配置
+  // 血染钟楼：说书人手动配置本局角色（步进器微调），支持一键随机
   if(currentMode==='botc'){
-    ['presets','steppers','totalWrap','cfgLabel'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
-    document.getElementById('botcSizes').style.display='';
-    document.getElementById('botcSummary').style.display='';
-    renderBotcSizes();
+    ['presets','botcSizes','botcSummary'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
+    ['steppers','totalWrap','cfgLabel'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='';});
+    botcRandom();
   }else{
     applyPreset(currentPreset);
     ['presets','steppers','totalWrap','cfgLabel'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='';});
@@ -395,19 +396,14 @@ function buildHome(){
     document.getElementById('botcSummary').style.display='none';
   }
 }
-function renderBotcSizes(){
-  const wrap=document.getElementById('botcSizes'); wrap.innerHTML='';
-  [5,6,7,8,9,10,11,12].forEach(k=>{
-    const b=document.createElement('div'); b.className='chip'+(k===botcSize?' on':''); b.textContent=k+'人';
-    b.onclick=()=>botcSelectSize(k); wrap.appendChild(b);
-  });
-  if(!botcSize) document.getElementById('botcSummary').textContent='选择人数后，将随机为你分配恶魔/爪牙与城镇角色（具体身份开局揭晓）。';
-}
-function botcSelectSize(k){
-  botcSize=k; botcRoleConfig=botcGenRoles(k);
-  const outs=Math.min(3,Math.max(1,Math.floor((k-5)/2)+1));
-  document.getElementById('botcSummary').textContent=`已选 ${k} 人：将随机分配 1 恶魔 · 1 爪牙 · ${k-2} 名善良角色（其中约 ${outs} 名「局外人」）。具体身份开局揭晓。`;
-  renderBotcSizes();
+// 血染钟楼：按当前总人数一键随机生成角色配置（说书人可在此基础上手动 +/- 微调）
+function botcRandom(){
+  const cur=parseInt((document.getElementById('totalCount')||{}).textContent)||6;
+  const k=Math.max(5,Math.min(12,cur));
+  const cfg=botcGenRoles(k);
+  MODES.botc.roleOrder.forEach(r=>{const el=document.getElementById('num_'+r); if(el) el.textContent=cfg[r]||0;});
+  document.getElementById('presetHint').innerHTML=`<button class="btn ghost sm" onclick="botcRandom()">🎲 随机生成</button><span style="margin-left:6px">手动 ± 微调本局角色（说书人配置）</span>`;
+  updateTotal();
 }
 function applyPreset(k){const p=MODES[currentMode].presets[k];MODES[currentMode].roleOrder.forEach(r=>document.getElementById('num_'+r).textContent=p[r]||0);currentPreset=k;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.toggle('on',c.textContent===k));document.getElementById('presetHint').textContent='';updateTotal();}
 function step(r,d){const el=document.getElementById('num_'+r);let v=parseInt(el.textContent)+d;if(v<0)v=0;if(v>20)v=20;el.textContent=v;currentPreset=null;document.querySelectorAll('#presets .chip').forEach(c=>c.classList.remove('on'));document.getElementById('presetHint').textContent='自定义';updateTotal();}
@@ -416,17 +412,12 @@ function getRoles(){const o={};MODES[currentMode].roleOrder.forEach(r=>o[r]=pars
 
 async function createRoom(){
   const name=(document.getElementById('homeName').value||'法官').trim();
-  let roles;
-  if(currentMode==='botc'){
-    if(!botcRoleConfig){toast('请先选择血染钟楼人数');return;}
-    roles=botcRoleConfig;
-  }else{
-    roles=getRoles();
-  }
+  const roles=getRoles();
   let total=0;MODES[currentMode].roleOrder.forEach(r=>total+=roles[r]);
   if(total<MODES[currentMode].minPlayers){toast('至少需要 '+MODES[currentMode].minPlayers+' 人');return;}
   const wolves=MODES[currentMode].roleOrder.filter(r=>MODES[currentMode].roles[r].team==='wolf').reduce((s,r)=>s+roles[r],0);
   if(wolves<1){toast('至少 1 名杀手/狼人');return;}
+  if(currentMode==='botc' && !(roles.demon>=1)){toast('血染钟楼至少需要 1 名恶魔');return;}
   const noJudge=document.getElementById('noJudge').checked;
   const r=await post('/api/create',{name,roles,mode:currentMode,noJudge});
   if(!r.ok){toast(r.error||'创建失败');return;}
@@ -500,6 +491,10 @@ function render(){
   const ctx=S.phase+'#'+S.day;
   if(ctx!==lastCtx){ selTarget=null; selVote=null; selVoteDone=false; wHeal=false; wPoison=null; lastCtx=ctx; }
   renderMe();
+  // 血染钟楼：邪恶阵营显示外皮（bluff）提示
+  const bt=document.getElementById('bluffTip');
+  if(S.bluff && S.bluff.length){ bt.style.display=''; bt.innerHTML='🎭 外皮（你可伪装成）：'+S.bluff.join(' · '); }
+  else bt.style.display='none';
   // 首次进入游戏：自动弹出“我的角色”卡
   if(S.phase!=='lobby' && S.you.role && !roleCardShown){ roleCardShown=true; showRoleCard(); }
   const stage=document.getElementById('stage');
@@ -581,6 +576,7 @@ function openGodView(){
   }).join('');
   document.getElementById('godList').innerHTML=gv;
   let sum='';
+  if(g.bluff && g.bluff.length) sum+=`🎭 本局外皮（给坏人伪装）：${g.bluff.join('、')}<br>`;
   if(g.sheriff) sum+=`🔰 警长：${escapeHtml(g.sheriff)}<br>`;
   if(g.night){
     const n=g.night;

@@ -162,6 +162,14 @@ function checkWinBotc(room) {
   if (good <= demons) return 'wolf';
   return null;
 }
+// 血染钟楼：为恶魔/爪牙挑选 3 个「本局未使用」的善良角色作为外皮(bluff)，用于伪装
+function buildBotcBluff(room) {
+  const used = new Set();
+  Object.keys(room.roleConfig || {}).forEach(k => { if ((room.roleConfig[k] || 0) > 0) used.add(k); });
+  const pool = MODES.botc.roleOrder.filter(r => MODES.botc.roles[r].team === 'good' && !used.has(r));
+  shuffle(pool);
+  return pool.slice(0, 3).map(r => MODES.botc.roles[r].name);
+}
 function checkWinWerewolf(room) {
   const wolves = room.players.filter(p => p.isWolf && p.alive).length;
   const good = room.players.filter(p => !p.isWolf && p.alive).length;
@@ -208,6 +216,7 @@ function view(room, pid) {
     sheriff: room.sheriff || null,
     timer: room.phaseEndsAt ? { endsAt: room.phaseEndsAt, total: phaseTotal(room) } : null,
     you: { id: me.id, name: me.name, role: me.role, team: me.team, alive: me.alive, isWolf: me.isWolf },
+    bluff: (room.mode === 'botc' && me.team === 'wolf' && room.bluff) ? room.bluff : null,
     readyCount: room.ready ? room.ready.size : 0,
     readyTotal: room.players.length,
     youReady: !!(room.ready && room.ready.has(pid)),
@@ -260,7 +269,7 @@ function buildGodView(room) {
       };
     }
   }
-  return { players, night, sheriff: room.sheriff ? nameOf(room, room.sheriff) : null };
+  return { players, night, sheriff: room.sheriff ? nameOf(room, room.sheriff) : null, bluff: room.bluff || null };
 }
 
 function buildMyAction(room, me) {
@@ -329,6 +338,7 @@ function startGame(room) {
   room.terroristBombUsed = false;
   room.silenced = null;
   room.sheriff = null;
+  if (room.mode === 'botc') room.bluff = buildBotcBluff(room);
   if (room.mode === 'werewolf') { startSheriff(room); }
   else { startNight(room, true); }
   log(room, `游戏开始（${M.label}），共 ${room.players.length} 人。`);
@@ -697,6 +707,7 @@ function handleApi(url, data) {
       if (total < M.minPlayers) return { ok: false, error: `至少 ${M.minPlayers} 人` };
       const wolves = M.roleOrder.filter(r => M.roles[r].team === 'wolf').reduce((s, r) => s + (cfg[r] || 0), 0);
       if (wolves < M.minWolves) return { ok: false, error: `至少 ${M.minWolves} 名杀手/狼人` };
+      if (mode === 'botc' && !(cfg.demon >= 1)) return { ok: false, error: '至少 1 名恶魔' };
       const code = genCode();
       const hostId = uid();
       const room = {
